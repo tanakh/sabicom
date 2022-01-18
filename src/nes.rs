@@ -1,9 +1,11 @@
 use std::{cell::RefCell, rc::Rc};
 
 use crate::{
+    consts::*,
     cpu::Cpu,
     mapper::{create_mapper, Mapper},
     memory::MemoryMap,
+    ppu::Ppu,
     rom::Rom,
 };
 
@@ -15,6 +17,7 @@ fn wrap_ref<T>(v: T) -> Ref<T> {
 
 pub struct Nes {
     cpu: Cpu,
+    ppu: Ref<Ppu>,
     mem: Ref<MemoryMap>,
     rom: Ref<Rom>,
 }
@@ -34,15 +37,13 @@ impl<T: Mapper + 'static> HelperTrait for T {
 impl Nes {
     pub fn new(rom: Rom, _sram: Option<Vec<u8>>) -> Self {
         let rom = wrap_ref(rom);
+        let ppu = wrap_ref(Ppu::new());
 
         let mapper = create_mapper(Rc::clone(&rom));
-        let mem = Rc::new(RefCell::new(MemoryMap::new(mapper)));
+        let mem = Rc::new(RefCell::new(MemoryMap::new(Rc::clone(&ppu), mapper)));
+        let cpu = Cpu::new(Rc::clone(&mem));
 
-        Self {
-            rom,
-            cpu: Cpu::new(Rc::clone(&mem)),
-            mem,
-        }
+        Self { rom, ppu, cpu, mem }
     }
 
     pub fn reset(&mut self) {
@@ -50,11 +51,9 @@ impl Nes {
     }
 
     pub fn exec_frame(&mut self) {
-        const CLOCK_PER_LINE: u64 = 114;
-        const LINES: usize = 262;
-
-        for _ in 0..LINES {
-            self.cpu.exec(CLOCK_PER_LINE);
+        for _ in 0..CLOCK_PER_FRAME {
+            self.cpu.tick();
+            self.ppu.borrow_mut().tick();
         }
     }
 

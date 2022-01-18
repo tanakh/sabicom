@@ -2,12 +2,17 @@ use std::{cell::RefCell, rc::Rc};
 
 use crate::memory::MemoryMap;
 
+const NMI_VECTOR: u16 = 0xFFFA;
+const RST_VECTOR: u16 = 0xFFFC;
+const IRQ_VECTOR: u16 = 0xFFFE;
+
 pub struct Cpu {
     rst_line: bool,
     irq_line: bool,
     nmi_line: bool,
 
-    mclock: u64,
+    world: u64,
+    counter: u64,
 
     reg: Register,
 
@@ -96,10 +101,11 @@ impl Flag {
 
 impl Cpu {
     pub fn new(mem: Rc<RefCell<MemoryMap>>) -> Self {
-        let pc = mem.borrow_mut().read_u16(0xfffc);
+        let pc = mem.borrow_mut().read_u16(RST_VECTOR);
         Self {
             mem,
-            mclock: 0,
+            counter: 0,
+            world: 0,
             reg: Register::new(pc),
             rst_line: false,
             irq_line: false,
@@ -107,10 +113,10 @@ impl Cpu {
         }
     }
 
-    pub fn exec(&mut self, clk: u64) {
-        let end = self.mclock + clk;
+    pub fn tick(&mut self) {
+        self.world += 1;
 
-        while self.mclock < end {
+        while self.counter < self.world {
             self.exec_one();
         }
     }
@@ -362,7 +368,7 @@ impl Cpu {
                 let rel = self.fetch_u8() as i8;
                 if self.reg.flag.$cond == $val {
                     // TODO: accurate cycle count
-                    self.mclock += 1;
+                    self.counter += 1;
                     self.reg.pc = self.reg.pc.wrapping_add(rel as u16);
                 }
             }};
@@ -573,7 +579,7 @@ impl Cpu {
                 self.exec_interrupt(Interrupt::Irq);
             }
 
-            0xEA => self.mclock += 1, // NOP
+            0xEA => self.counter += 1, // NOP
 
             _ => {
                 panic!("undefined opcode: {opc:02x}");
@@ -586,7 +592,7 @@ impl Cpu {
     }
 
     fn read_u8(&mut self, addr: u16) -> u8 {
-        self.mclock += 1;
+        self.counter += 1;
         self.mem.borrow().read_u8(addr)
     }
 
@@ -595,7 +601,7 @@ impl Cpu {
     }
 
     fn write_u8(&mut self, addr: u16, val: u8) {
-        self.mclock += 1;
+        self.counter += 1;
         self.mem.borrow_mut().write_u8(addr, val);
     }
 
@@ -613,16 +619,16 @@ impl Cpu {
 
     fn push_u8(&mut self, val: u8) {
         self.write_u8(0x100 + self.reg.s as u16, val);
-        self.reg.s -= 1;
+        self.reg.s = self.reg.s.wrapping_sub(1);
     }
 
     fn push_u16(&mut self, val: u16) {
-        self.push_u8(val as u8);
         self.push_u8((val >> 8) as u8);
+        self.push_u8(val as u8);
     }
 
     fn pop_u8(&mut self) -> u8 {
-        self.reg.s += 1;
+        self.reg.s = self.reg.s.wrapping_add(1);
         self.read_u8(0x100 + self.reg.s as u16)
     }
 
@@ -640,7 +646,7 @@ impl Cpu {
         let disasm = disasm(pc, opc, opr);
 
         println!(
-            "{pc:04X} | {disasm:13} | A:{a:02X} X:{x:02X} Y:{y:02X} S:{s:02X} P:{n}{v}{b}{d}{i}{z}{c}",
+            "{pc:04X} | {disasm:13} | A:{a:02X} X:{x:02X} Y:{y:02X} S:{s:02X} {n}{v}{b}{d}{i}{z}{c}",
             a = self.reg.a,
             x = self.reg.x,
             y = self.reg.y,

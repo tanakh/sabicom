@@ -1,7 +1,9 @@
+mod consts;
 mod cpu;
 mod mapper;
 mod memory;
 mod nes;
+mod ppu;
 mod rom;
 
 use anyhow::Result;

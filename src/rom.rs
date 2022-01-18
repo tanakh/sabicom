@@ -201,14 +201,18 @@ impl Rom {
         let chr_rom = dat[..chr_rom_size].to_owned();
         dat = &dat[chr_rom_size..];
 
-        assert!(dat.is_empty());
+        if !dat.is_empty() {
+            bail!("ROM data has invalid extra bytes");
+        }
+
+        let format = if is_nes2 {
+            RomFormat::Nes20
+        } else {
+            RomFormat::INes
+        };
 
         Ok(Self {
-            format: if is_nes2 {
-                RomFormat::Nes20
-            } else {
-                RomFormat::INes
-            },
+            format,
             prg_rom,
             chr_rom,
             trainer,
