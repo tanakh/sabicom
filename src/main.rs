@@ -1,3 +1,4 @@
+mod apu;
 mod consts;
 mod cpu;
 mod mapper;
@@ -5,6 +6,7 @@ mod memory;
 mod nes;
 mod ppu;
 mod rom;
+mod util;
 
 use anyhow::Result;
 use std::path::PathBuf;

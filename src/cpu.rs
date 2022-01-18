@@ -1,6 +1,4 @@
-use std::{cell::RefCell, rc::Rc};
-
-use crate::memory::MemoryMap;
+use crate::{memory::MemoryMap, util::Ref};
 
 const NMI_VECTOR: u16 = 0xFFFA;
 const RST_VECTOR: u16 = 0xFFFC;
@@ -16,7 +14,7 @@ pub struct Cpu {
 
     reg: Register,
 
-    mem: Rc<RefCell<MemoryMap>>,
+    mem: Ref<MemoryMap>,
 }
 
 #[derive(Debug)]
@@ -100,7 +98,7 @@ impl Flag {
 }
 
 impl Cpu {
-    pub fn new(mem: Rc<RefCell<MemoryMap>>) -> Self {
+    pub fn new(mem: Ref<MemoryMap>) -> Self {
         let pc = mem.borrow_mut().read_u16(RST_VECTOR);
         Self {
             mem,
@@ -122,7 +120,7 @@ impl Cpu {
     }
 
     fn exec_one(&mut self) {
-        self.dump();
+        // self.dump();
 
         if !self.reg.flag.i {
             if self.rst_line {

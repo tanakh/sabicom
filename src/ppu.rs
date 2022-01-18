@@ -3,6 +3,7 @@ use crate::consts::*;
 pub struct Ppu {
     reg: Register,
     oam: Vec<u8>,
+    palette: Vec<u8>,
     line: usize,
     counter: u64,
 }
@@ -49,6 +50,7 @@ impl Ppu {
         Self {
             reg: Register::new(),
             oam: vec![0x00; 256],
+            palette: vec![0x00; 64],
             counter: 0,
             line: 0,
         }
@@ -162,7 +164,23 @@ impl Ppu {
             }
             7 => {
                 // VRAM I/O Register (RW)
-                todo!("Write to $2007 = {val:02X}");
+
+                if self.reg.scroll & 0x3f00 != 0x3f00 {
+                    let addr = self.reg.scroll & 0x1f;
+                    log::warn!("Write to CHR-ROM (${addr:04X}) = {val:02X}");
+                } else {
+                    let addr = self.reg.scroll & 0x1f;
+                    let val = val & 0x3f;
+                    self.palette[addr as usize] = val;
+                    if addr & 3 == 0 {
+                        self.palette[(addr ^ 0x10) as usize] = val;
+                    }
+                }
+
+                self.reg.scroll =
+                    self.reg
+                        .scroll
+                        .wrapping_add(if self.reg.ppu_addr_incr { 32 } else { 1 });
             }
             _ => unreachable!(),
         }
