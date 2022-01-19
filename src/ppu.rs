@@ -1,4 +1,4 @@
-use crate::consts::*;
+use crate::{consts::*, mapper::Mapper, util::Ref};
 
 pub struct Ppu {
     reg: Register,
@@ -6,6 +6,7 @@ pub struct Ppu {
     palette: Vec<u8>,
     line: usize,
     counter: u64,
+    mapper: Ref<dyn Mapper>,
 }
 
 #[derive(Default)]
@@ -46,13 +47,14 @@ impl Register {
 }
 
 impl Ppu {
-    pub fn new() -> Self {
+    pub fn new(mapper: Ref<dyn Mapper>) -> Self {
         Self {
             reg: Register::new(),
             oam: vec![0x00; 256],
             palette: vec![0x00; 64],
             counter: 0,
             line: 0,
+            mapper,
         }
     }
 
@@ -164,18 +166,8 @@ impl Ppu {
             }
             7 => {
                 // VRAM I/O Register (RW)
-
-                if self.reg.scroll & 0x3f00 != 0x3f00 {
-                    let addr = self.reg.scroll & 0x1f;
-                    log::warn!("Write to CHR-ROM (${addr:04X}) = {val:02X}");
-                } else {
-                    let addr = self.reg.scroll & 0x1f;
-                    let val = val & 0x3f;
-                    self.palette[addr as usize] = val;
-                    if addr & 3 == 0 {
-                        self.palette[(addr ^ 0x10) as usize] = val;
-                    }
-                }
+                let addr = self.reg.scroll & 0x1f;
+                self.mapper.borrow_mut().write_chr(addr, val);
 
                 self.reg.scroll =
                     self.reg

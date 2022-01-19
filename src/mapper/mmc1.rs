@@ -112,7 +112,9 @@ impl super::Mapper for Mmc1 {
                 }
             },
             2 => match self.chr_rom_bank_mode {
-                ChrRomBankMode::Switch8K => {}
+                ChrRomBankMode::Switch8K => {
+                    // Ignore command
+                }
                 ChrRomBankMode::Switch4K => {
                     let page = cmd as usize;
                     for i in 0..4 {
@@ -145,6 +147,6 @@ impl super::Mapper for Mmc1 {
     }
 
     fn write_chr(&mut self, addr: u16, val: u8) {
-        todo!()
+        self.ctrl.write_chr(addr, val);
     }
 }

@@ -39,8 +39,8 @@ impl MemoryMap {
         (self.read_u8(addr) as u16) | ((self.read_u8(addr + 1) as u16) << 8)
     }
 
-    pub fn write_u16(&mut self, addr: u16, val: u16) {
-        self.write_u8(addr, (val & 0xff) as u8);
-        self.write_u8(addr + 1, (val >> 8) as u8);
-    }
+    // pub fn write_u16(&mut self, addr: u16, val: u16) {
+    //     self.write_u8(addr, (val & 0xff) as u8);
+    //     self.write_u8(addr + 1, (val >> 8) as u8);
+    // }
 }

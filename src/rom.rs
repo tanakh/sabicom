@@ -144,7 +144,11 @@ impl Rom {
                 64 << shift_count
             }
         } else {
-            0
+            if chr_rom_size == 0 {
+                8 * 1024
+            } else {
+                0
+            }
         };
 
         let chr_nvram_size = if is_nes2 {

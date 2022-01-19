@@ -22,10 +22,11 @@ pub struct State {}
 impl Nes {
     pub fn new(rom: Rom, _sram: Option<Vec<u8>>) -> Self {
         let rom = wrap_ref(rom);
-        let ppu = wrap_ref(Ppu::new());
+        let mapper = create_mapper(clone_ref(&rom));
+
+        let ppu = wrap_ref(Ppu::new(clone_ref(&mapper)));
         let apu = wrap_ref(Apu::new());
 
-        let mapper = create_mapper(clone_ref(&rom));
         let mem = wrap_ref(MemoryMap::new(clone_ref(&ppu), clone_ref(&apu), mapper));
         let cpu = Cpu::new(clone_ref(&mem));
 
