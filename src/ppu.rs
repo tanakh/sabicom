@@ -3,7 +3,6 @@ use crate::{consts::*, mapper::Mapper, util::Ref};
 pub struct Ppu {
     reg: Register,
     oam: Vec<u8>,
-    palette: Vec<u8>,
     line: usize,
     counter: u64,
     mapper: Ref<dyn Mapper>,
@@ -51,7 +50,6 @@ impl Ppu {
         Self {
             reg: Register::new(),
             oam: vec![0x00; 256],
-            palette: vec![0x00; 64],
             counter: 0,
             line: 0,
             mapper,

@@ -6,3 +6,6 @@ pub const VBLANK_LINES: usize = 20;
 pub const POST_RENDER_LINE: usize = 240;
 pub const PRE_RENDER_LINE: usize = 261;
 pub const TOTAL_LINES: usize = 262;
+
+pub const SCREEN_WIDTH: usize = 256;
+pub const SCREEN_HEIGHT: usize = 240;

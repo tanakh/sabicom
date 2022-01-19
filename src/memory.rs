@@ -21,7 +21,7 @@ impl MemoryMap {
         match addr {
             0x0000..=0x1fff => self.ram[(addr & 0x7ff) as usize],
             0x2000..=0x3fff => self.ppu.borrow_mut().read_reg(addr & 7),
-            0x4000..=0x401f => self.apu.borrow_mut().read_reg(addr),
+            0x4000..=0x4017 => self.apu.borrow_mut().read_reg(addr),
             0x4018..=0xffff => self.mapper.borrow_mut().read_prg(addr),
         }
     }
@@ -30,7 +30,7 @@ impl MemoryMap {
         match addr {
             0x0000..=0x1fff => self.ram[(addr & 0x7ff) as usize] = val,
             0x2000..=0x3fff => self.ppu.borrow_mut().write_reg(addr & 7, val),
-            0x4000..=0x401f => self.apu.borrow_mut().write_reg(addr, val),
+            0x4000..=0x4017 => self.apu.borrow_mut().write_reg(addr, val),
             0x4018..=0xffff => self.mapper.borrow_mut().write_prg(addr, val),
         }
     }

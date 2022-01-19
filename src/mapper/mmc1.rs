@@ -53,7 +53,7 @@ impl super::Mapper for Mmc1 {
 
     fn write_prg(&mut self, addr: u16, val: u8) {
         if val & 0x80 != 0 {
-            log::warn!("MMC1: Reset");
+            log::info!("MMC1: Reset");
             self.buf = 0;
             self.cnt = 0;
             return;
@@ -72,7 +72,7 @@ impl super::Mapper for Mmc1 {
 
         let reg_num = (addr >> 13) & 3;
 
-        log::warn!("MMC1: [{reg_num}] <- {cmd:02X}");
+        log::info!("MMC1: [{reg_num}] <- {cmd:02X}");
 
         match reg_num {
             0 => {

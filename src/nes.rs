@@ -2,11 +2,11 @@ use crate::{
     apu::Apu,
     consts::*,
     cpu::Cpu,
-    mapper::{create_mapper, Mapper},
+    mapper::create_mapper,
     memory::MemoryMap,
     ppu::Ppu,
     rom::Rom,
-    util::{clone_ref, wrap_ref, Ref},
+    util::{clone_ref, wrap_ref, FrameBuffer, Ref},
 };
 
 pub struct Nes {
@@ -15,6 +15,7 @@ pub struct Nes {
     apu: Ref<Apu>,
     mem: Ref<MemoryMap>,
     rom: Ref<Rom>,
+    frame_buf: FrameBuffer,
 }
 
 pub struct State {}
@@ -30,12 +31,15 @@ impl Nes {
         let mem = wrap_ref(MemoryMap::new(clone_ref(&ppu), clone_ref(&apu), mapper));
         let cpu = Cpu::new(clone_ref(&mem));
 
+        let frame_buf = FrameBuffer::new(SCREEN_WIDTH, SCREEN_HEIGHT);
+
         Self {
             rom,
             ppu,
             apu,
             cpu,
             mem,
+            frame_buf,
         }
     }
 
@@ -48,6 +52,10 @@ impl Nes {
             self.cpu.tick();
             self.ppu.borrow_mut().tick();
         }
+    }
+
+    pub fn get_frame_buf(&self) -> &FrameBuffer {
+        &self.frame_buf
     }
 
     pub fn save_state(&self) -> State {
