@@ -14,6 +14,7 @@ use sdl2::{
     event::Event,
     keyboard::Keycode,
     pixels::{Color, PixelFormatEnum},
+    rect::Rect,
     EventPump,
 };
 use std::{collections::VecDeque, path::PathBuf, time::Duration};
@@ -35,11 +36,14 @@ fn main(file: PathBuf) -> Result<()> {
         (buf.width, buf.height)
     };
 
+    let screen_width = width as u32 * SCALING;
+    let screen_height = height as u32 * SCALING;
+
     let sdl_context = sdl2::init().map_err(|e| anyhow!("{e}"))?;
     let video_subsystem = sdl_context.video().map_err(|e| anyhow!("{e}"))?;
 
     let window = video_subsystem
-        .window("runes", width as u32 * SCALING, height as u32 * SCALING)
+        .window("runes", screen_width, screen_height)
         .build()?;
 
     let mut canvas = window.into_canvas().build()?;
@@ -48,6 +52,11 @@ fn main(file: PathBuf) -> Result<()> {
     canvas.set_draw_color(Color::RGB(0, 0, 0));
     canvas.clear();
     canvas.present();
+
+    let ttf_context = sdl2::ttf::init().map_err(|e| anyhow!("{e}"))?;
+    let font = ttf_context
+        .load_font("./assets/fonts/Inconsolata-Regular.ttf", 32)
+        .map_err(|e| anyhow!("{e}"))?;
 
     let mut surface = sdl2::surface::Surface::new(width as _, height as _, PixelFormatEnum::RGB24)
         .map_err(|e| anyhow!("{e}"))?;
@@ -88,6 +97,27 @@ fn main(file: PathBuf) -> Result<()> {
         canvas
             .copy(&texture, None, None)
             .map_err(|e| anyhow!("{e}"))?;
+
+        {
+            let fps_tex = font
+                .render(&format!("{:.2}", timer.fps()))
+                .blended(Color::WHITE)?
+                .as_texture(&texture_creator)?;
+
+            let (w, h) = {
+                let q = fps_tex.query();
+                (q.width, q.height)
+            };
+
+            canvas
+                .copy(
+                    &fps_tex,
+                    None,
+                    Rect::new(screen_width as i32 - w as i32, 0, w, h),
+                )
+                .map_err(|e| anyhow!("{e}"))?;
+        }
+
         canvas.present();
 
         timer.wait_for_frame(FPS);
