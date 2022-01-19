@@ -8,10 +8,10 @@ use crate::{
 
 pub trait Mapper {
     fn read_prg(&mut self, addr: u16) -> u8;
-    fn write_prg(&mut self, addr: u16, val: u8);
+    fn write_prg(&mut self, addr: u16, data: u8);
 
     fn read_chr(&mut self, addr: u16) -> u8;
-    fn write_chr(&mut self, addr: u16, val: u8);
+    fn write_chr(&mut self, addr: u16, data: u8);
 }
 
 pub fn create_mapper(rom: Ref<Rom>) -> Ref<dyn Mapper> {
@@ -124,8 +124,8 @@ impl MemoryController {
         }
     }
 
-    fn write_chr(&mut self, addr: u16, val: u8) {
-        log::info!("Write CHR MEM: (${addr:04X}) = ${val:02X}");
+    fn write_chr(&mut self, addr: u16, data: u8) {
+        log::info!("Write CHR MEM: (${addr:04X}) = ${data:02X}");
 
         match addr {
             0x0000..=0x1fff => {
@@ -133,19 +133,19 @@ impl MemoryController {
                 let ix = self.chr_page[page] + (addr & 0x03ff) as usize;
 
                 if !self.rom.borrow().chr_rom.is_empty() {
-                    panic!("Write to CHR ROM: (${addr:04X}) = ${val:02X}");
+                    panic!("Write to CHR ROM: (${addr:04X}) = ${data:02X}");
                 } else {
-                    self.chr_ram[ix] = val;
+                    self.chr_ram[ix] = data;
                 }
             }
             0x2000..=0x3eff => {
                 let page = (addr as usize & 0x1fff) / 0x400;
                 let ofs = addr as usize & 0x03ff;
                 let ix = self.nametable_page[page] + ofs;
-                self.nametable[ix] = val;
+                self.nametable[ix] = data;
             }
             0x3f00..=0x3fff => {
-                self.palette[(addr & 0x1f) as usize] = val;
+                self.palette[(addr & 0x1f) as usize] = data;
             }
             _ => unreachable!(),
         }

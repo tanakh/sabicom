@@ -134,92 +134,92 @@ impl Ppu {
         }
     }
 
-    pub fn write_reg(&mut self, addr: u16, val: u8) {
+    pub fn write_reg(&mut self, addr: u16, data: u8) {
         match addr {
             0 => {
                 // Controller
                 log::info!(
                     target: "ppureg",
-                    "[PPUCTRL] = b{val:08b}: nmi={nmi}, ppu={ppu}, spr={sprite_size}, bgpat=${bg_pat_addr:04X}, sprpat=${sprite_pat_addr:04X}, addrinc={ppu_addr_incr}, nt_addr=${base_nametable_addr:04X}",
-                    nmi = if val & 0x80 != 0 { "t" } else { "f" },
-                    ppu = if val & 0x40 != 0 { "t" } else { "f" },
-                    sprite_size = if val & 0x20 != 0 { "8x16" } else { "8x8" },
-                    bg_pat_addr = if val & 0x10 != 0 { 0x0000 } else { 0x1000 },
-                    sprite_pat_addr =  if val & 0x08 != 0 { 0x0000 } else { 0x1000 },
-                    ppu_addr_incr =  if val & 0x04 != 0 { 32 } else { 1 },
-                    base_nametable_addr = 0x2000 + (val as u16 & 3) * 0x400,
+                    "[PPUCTRL] = b{data:08b}: nmi={nmi}, ppu={ppu}, spr={sprite_size}, bgpat=${bg_pat_addr:04X}, sprpat=${sprite_pat_addr:04X}, addrinc={ppu_addr_incr}, nt_addr=${base_nametable_addr:04X}",
+                    nmi = if data & 0x80 != 0 { "t" } else { "f" },
+                    ppu = if data & 0x40 != 0 { "t" } else { "f" },
+                    sprite_size = if data & 0x20 != 0 { "8x16" } else { "8x8" },
+                    bg_pat_addr = if data & 0x10 != 0 { 0x0000 } else { 0x1000 },
+                    sprite_pat_addr =  if data & 0x08 != 0 { 0x0000 } else { 0x1000 },
+                    ppu_addr_incr =  if data & 0x04 != 0 { 32 } else { 1 },
+                    base_nametable_addr = 0x2000 + (data as u16 & 3) * 0x400,
                 );
 
-                self.reg.nmi_enable = val & 0x80 != 0;
-                self.reg.ppu_master = val & 0x40 != 0;
-                self.reg.sprite_size = val & 0x20 != 0;
-                self.reg.bg_pat_addr = val & 0x10 != 0;
-                self.reg.sprite_pat_addr = val & 0x08 != 0;
-                self.reg.ppu_addr_incr = val & 0x04 != 0;
+                self.reg.nmi_enable = data & 0x80 != 0;
+                self.reg.ppu_master = data & 0x40 != 0;
+                self.reg.sprite_size = data & 0x20 != 0;
+                self.reg.bg_pat_addr = data & 0x10 != 0;
+                self.reg.sprite_pat_addr = data & 0x08 != 0;
+                self.reg.ppu_addr_incr = data & 0x04 != 0;
 
-                self.reg.tmp_addr = (self.reg.tmp_addr & 0x73FF) | ((val as u16 & 3) << 10);
+                self.reg.tmp_addr = (self.reg.tmp_addr & 0x73FF) | ((data as u16 & 3) << 10);
             }
 
             1 => {
                 // Mask
-                log::info!(target: "ppureg", "[PPUMASK] = b{val:08b}: bgcol={r}{g}{b}, spr_vis={sprite_visible}, bg_vis={bg_visible}, spr_clip={sprite_clip}, bg_clip={bg_clip}, greyscale={greyscale}",
-                    r = if val & 0x20 != 0 { "R" } else { "-" },
-                    g = if val & 0x40 != 0 { "G" } else { "-" },
-                    b = if val & 0x80 != 0 { "B" } else { "-" },
-                    sprite_visible = if val & 0x10 != 0 { "t" } else { "f" },
-                    bg_visible = if val & 0x08 != 0 { "t" } else { "f" },
-                    sprite_clip = if val & 0x04 != 0 { "f" } else { "t" },
-                    bg_clip = if val & 0x02 != 0 { "f" } else { "t" },
-                    greyscale = if val & 0x01 != 0 { "t" } else { "f" },
+                log::info!(target: "ppureg", "[PPUMASK] = b{data:08b}: bgcol={r}{g}{b}, spr_vis={sprite_visible}, bg_vis={bg_visible}, spr_clip={sprite_clip}, bg_clip={bg_clip}, greyscale={greyscale}",
+                    r = if data & 0x20 != 0 { "R" } else { "-" },
+                    g = if data & 0x40 != 0 { "G" } else { "-" },
+                    b = if data & 0x80 != 0 { "B" } else { "-" },
+                    sprite_visible = if data & 0x10 != 0 { "t" } else { "f" },
+                    bg_visible = if data & 0x08 != 0 { "t" } else { "f" },
+                    sprite_clip = if data & 0x04 != 0 { "f" } else { "t" },
+                    bg_clip = if data & 0x02 != 0 { "f" } else { "t" },
+                    greyscale = if data & 0x01 != 0 { "t" } else { "f" },
                 );
 
-                self.reg.bg_color = val >> 5;
-                self.reg.sprite_visible = val & 0x10 != 0;
-                self.reg.bg_visible = val & 0x08 != 0;
-                self.reg.sprite_clip = val & 0x04 != 0;
-                self.reg.bg_clip = val & 0x02 != 0;
-                self.reg.color_display = val & 0x01 != 0;
+                self.reg.bg_color = data >> 5;
+                self.reg.sprite_visible = data & 0x10 != 0;
+                self.reg.bg_visible = data & 0x08 != 0;
+                self.reg.sprite_clip = data & 0x04 != 0;
+                self.reg.bg_clip = data & 0x02 != 0;
+                self.reg.color_display = data & 0x01 != 0;
             }
             2 => {
                 // Status
-                log::warn!("Write to $2002 = {val:02X}");
+                log::warn!("Write to $2002 = {data:02X}");
             }
             3 => {
                 // OAM address
-                log::info!(target: "ppureg", "[OAMADDR] <- ${val:02X}");
+                log::info!(target: "ppureg", "[OAMADDR] <- ${data:02X}");
 
-                self.reg.oam_addr = val;
+                self.reg.oam_addr = data;
             }
             4 => {
                 // OAM data
-                log::info!(target: "ppureg", "[OAMDATA] <- ${val:02X}: OAM[${oam_addr:02X}] = ${val:02X}",
+                log::info!(target: "ppureg", "[OAMDATA] <- ${data:02X}: OAM[${oam_addr:02X}] = ${data:02X}",
                     oam_addr = self.reg.oam_addr);
 
-                self.oam[self.reg.oam_addr as usize] = val;
+                self.oam[self.reg.oam_addr as usize] = data;
                 self.reg.oam_addr = self.reg.oam_addr.wrapping_add(1);
             }
             5 => {
                 // Scroll
-                log::info!(target: "ppureg", "[PPUSCROLL] <- ${val:02X}");
+                log::info!(target: "ppureg", "[PPUSCROLL] <- ${data:02X}");
 
                 if !self.reg.toggle {
-                    self.reg.tmp_addr = (self.reg.tmp_addr & 0x7fe0) | (val as u16 >> 3);
-                    self.reg.scroll_x = val & 0x07;
+                    self.reg.tmp_addr = (self.reg.tmp_addr & 0x7fe0) | (data as u16 >> 3);
+                    self.reg.scroll_x = data & 0x07;
                 } else {
                     self.reg.tmp_addr = (self.reg.tmp_addr & 0x0c1f)
-                        | (val as u16 & 0xF8) << 5
-                        | (val as u16 & 0x07) << 12;
+                        | (data as u16 & 0xF8) << 5
+                        | (data as u16 & 0x07) << 12;
                 }
                 self.reg.toggle = !self.reg.toggle;
             }
             6 => {
                 // Address
-                log::info!(target: "ppureg", "[PPUADDR] <- ${val:02X}");
+                log::info!(target: "ppureg", "[PPUADDR] <- ${data:02X}");
 
                 if !self.reg.toggle {
-                    self.reg.tmp_addr = (self.reg.tmp_addr & 0x00ff) | ((val as u16 & 0x3f) << 8);
+                    self.reg.tmp_addr = (self.reg.tmp_addr & 0x00ff) | ((data as u16 & 0x3f) << 8);
                 } else {
-                    self.reg.tmp_addr = (self.reg.tmp_addr & 0x7f00) | val as u16;
+                    self.reg.tmp_addr = (self.reg.tmp_addr & 0x7f00) | data as u16;
                     self.reg.cur_addr = self.reg.tmp_addr;
                 }
                 self.reg.toggle = !self.reg.toggle;
@@ -228,9 +228,9 @@ impl Ppu {
                 // Data
                 let addr = self.reg.cur_addr & 0x3fff;
 
-                log::info!(target: "ppureg", "[PPUDATA] <- ${val:02X}, CHR[${addr:04X}] <- ${val:02X}");
+                log::info!(target: "ppureg", "[PPUDATA] <- ${data:02X}, CHR[${addr:04X}] <- ${data:02X}");
 
-                self.mapper.borrow_mut().write_chr(addr, val);
+                self.mapper.borrow_mut().write_chr(addr, data);
 
                 let inc_addr = if self.reg.ppu_addr_incr { 32 } else { 1 };
                 self.reg.cur_addr = self.reg.cur_addr.wrapping_add(inc_addr);

@@ -51,15 +51,15 @@ impl super::Mapper for Mmc1 {
         self.ctrl.read_chr(addr)
     }
 
-    fn write_prg(&mut self, addr: u16, val: u8) {
-        if val & 0x80 != 0 {
+    fn write_prg(&mut self, addr: u16, data: u8) {
+        if data & 0x80 != 0 {
             log::info!("MMC1: Reset");
             self.buf = 0;
             self.cnt = 0;
             return;
         }
 
-        self.buf |= (val & 1) << self.cnt;
+        self.buf |= (data & 1) << self.cnt;
         self.cnt += 1;
 
         if self.cnt < 5 {
@@ -146,7 +146,7 @@ impl super::Mapper for Mmc1 {
         }
     }
 
-    fn write_chr(&mut self, addr: u16, val: u8) {
-        self.ctrl.write_chr(addr, val);
+    fn write_chr(&mut self, addr: u16, data: u8) {
+        self.ctrl.write_chr(addr, data);
     }
 }

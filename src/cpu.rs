@@ -42,13 +42,13 @@ struct Register {
 }
 
 impl Register {
-    fn new(pc: u16) -> Self {
+    fn new() -> Self {
         Register {
             a: 0,
             x: 0,
             y: 0,
             s: 0xff,
-            pc,
+            pc: 0xff,
             flag: Flag::new(),
         }
     }
@@ -107,15 +107,16 @@ impl Flag {
 
 impl Cpu {
     pub fn new(mem: Ref<MemoryMap>, wires: Wires) -> Self {
-        let pc = mem.borrow_mut().read_u16(RST_VECTOR);
-        Self {
+        let mut ret = Self {
             mem,
             counter: 0,
             world: 0,
-            reg: Register::new(pc),
+            reg: Register::new(),
             wires,
             nmi_prev: false,
-        }
+        };
+        ret.exec_interrupt(Interrupt::Rst);
+        ret
     }
 
     pub fn tick(&mut self) {
@@ -609,23 +610,28 @@ impl Cpu {
             Interrupt::Nmi => NMI_VECTOR,
         };
 
-        self.push_u16(self.reg.pc);
-        self.push_u8(self.reg.flag.get_u8());
-        self.reg.pc = self.read_u16(vect);
-        self.reg.flag.i = true;
+        if matches!(interrupt, Interrupt::Rst) {
+            self.reg = Register::new();
+            self.reg.pc = self.read_u16(vect);
+        } else {
+            self.push_u16(self.reg.pc);
+            self.push_u8(self.reg.flag.get_u8());
+            self.reg.pc = self.read_u16(vect);
+            self.reg.flag.i = true;
+        }
     }
 
     fn read_u8(&mut self, addr: u16) -> u8 {
         self.counter += 1;
-        let ret = self.mem.borrow().read_u8(addr);
+        let ret = self.mem.borrow().read(addr);
         log::info!(target: "prgmem", "[${addr:04X}] -> ${ret:02X}");
         ret
     }
 
-    fn write_u8(&mut self, addr: u16, val: u8) {
+    fn write_u8(&mut self, addr: u16, data: u8) {
         self.counter += 1;
-        self.mem.borrow_mut().write_u8(addr, val);
-        log::info!(target: "prgmem", "[${addr:04X}] <- ${val:02X}");
+        self.mem.borrow_mut().write(addr, data);
+        log::info!(target: "prgmem", "[${addr:04X}] <- ${data:02X}");
     }
 
     fn read_u16(&mut self, addr: u16) -> u16 {
@@ -644,14 +650,14 @@ impl Cpu {
         ret
     }
 
-    fn push_u8(&mut self, val: u8) {
-        self.write_u8(0x100 + self.reg.s as u16, val);
+    fn push_u8(&mut self, data: u8) {
+        self.write_u8(0x100 + self.reg.s as u16, data);
         self.reg.s = self.reg.s.wrapping_sub(1);
     }
 
-    fn push_u16(&mut self, val: u16) {
-        self.push_u8((val >> 8) as u8);
-        self.push_u8(val as u8);
+    fn push_u16(&mut self, data: u16) {
+        self.push_u8((data >> 8) as u8);
+        self.push_u8(data as u8);
     }
 
     fn pop_u8(&mut self) -> u8 {
@@ -671,8 +677,9 @@ impl Cpu {
         }
 
         let pc = self.reg.pc;
-        let opc = self.mem.borrow().read_u8(pc);
-        let opr = self.mem.borrow().read_u16(pc + 1);
+        let opc = self.mem.borrow().read(pc);
+        let opr =
+            self.mem.borrow().read(pc + 1) as u16 | (self.mem.borrow().read(pc + 2) as u16) << 8;
 
         let disasm = disasm(pc, opc, opr);
 

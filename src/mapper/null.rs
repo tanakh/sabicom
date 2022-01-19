@@ -21,11 +21,11 @@ impl super::Mapper for NullMapper {
         self.ctrl.read_chr(addr)
     }
 
-    fn write_prg(&mut self, addr: u16, val: u8) {
-        log::warn!("write to PRG: {addr:04X} {val:02X}");
+    fn write_prg(&mut self, addr: u16, data: u8) {
+        log::warn!("write to PRG: {addr:04X} {data:02X}");
     }
 
-    fn write_chr(&mut self, _addr: u16, _val: u8) {
-        self.ctrl.write_chr(_addr, _val);
+    fn write_chr(&mut self, addr: u16, data: u8) {
+        self.ctrl.write_chr(addr, data);
     }
 }

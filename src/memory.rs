@@ -17,7 +17,7 @@ impl MemoryMap {
         }
     }
 
-    pub fn read_u8(&self, addr: u16) -> u8 {
+    pub fn read(&self, addr: u16) -> u8 {
         match addr {
             0x0000..=0x1fff => self.ram[(addr & 0x7ff) as usize],
             0x2000..=0x3fff => self.ppu.borrow_mut().read_reg(addr & 7),
@@ -26,21 +26,12 @@ impl MemoryMap {
         }
     }
 
-    pub fn write_u8(&mut self, addr: u16, val: u8) {
+    pub fn write(&mut self, addr: u16, data: u8) {
         match addr {
-            0x0000..=0x1fff => self.ram[(addr & 0x7ff) as usize] = val,
-            0x2000..=0x3fff => self.ppu.borrow_mut().write_reg(addr & 7, val),
-            0x4000..=0x4017 => self.apu.borrow_mut().write_reg(addr, val),
-            0x4018..=0xffff => self.mapper.borrow_mut().write_prg(addr, val),
+            0x0000..=0x1fff => self.ram[(addr & 0x7ff) as usize] = data,
+            0x2000..=0x3fff => self.ppu.borrow_mut().write_reg(addr & 7, data),
+            0x4000..=0x4017 => self.apu.borrow_mut().write_reg(addr, data),
+            0x4018..=0xffff => self.mapper.borrow_mut().write_prg(addr, data),
         }
     }
-
-    pub fn read_u16(&self, addr: u16) -> u16 {
-        (self.read_u8(addr) as u16) | ((self.read_u8(addr + 1) as u16) << 8)
-    }
-
-    // pub fn write_u16(&mut self, addr: u16, val: u16) {
-    //     self.write_u8(addr, (val & 0xff) as u8);
-    //     self.write_u8(addr + 1, (val >> 8) as u8);
-    // }
 }

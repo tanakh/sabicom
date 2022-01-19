@@ -15,7 +15,7 @@ impl Apu {
         }
     }
 
-    pub fn write_reg(&mut self, addr: u16, val: u8) {
-        log::info!("Write APU ${addr:04X} = ${val:02X}");
+    pub fn write_reg(&mut self, addr: u16, data: u8) {
+        log::info!("Write APU ${addr:04X} = ${data:02X}");
     }
 }
