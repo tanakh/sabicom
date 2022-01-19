@@ -1,4 +1,4 @@
-pub const CLOCK_PER_LINE: u64 = 114;
+pub const CLOCK_PER_LINE: u64 = 114; // 113 + 2/3
 pub const CLOCK_PER_FRAME: u64 = CLOCK_PER_LINE * TOTAL_LINES as u64;
 
 pub const VISIBLE_LINES: usize = 240;

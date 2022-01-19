@@ -108,7 +108,7 @@ impl Ppu {
                 self.reg.vblank = false;
                 self.reg.toggle = false;
 
-                log::info!(target: "PPUREG", "[PPUSTATUS] -> ${:02X}", ret);
+                log::info!(target: "ppureg", "[PPUSTATUS] -> ${:02X}", ret);
 
                 ret
             }
@@ -122,7 +122,7 @@ impl Ppu {
                 let inc_addr = if self.reg.ppu_addr_incr { 32 } else { 1 };
                 self.reg.cur_addr = self.reg.cur_addr.wrapping_add(inc_addr);
 
-                log::info!(target: "PPUREG", "[PPUDATA], CHR[${addr:04X}] -> ${ret:02X}");
+                log::info!(target: "ppureg", "[PPUDATA], CHR[${addr:04X}] -> ${ret:02X}");
 
                 ret
             }
@@ -135,13 +135,11 @@ impl Ppu {
     }
 
     pub fn write_reg(&mut self, addr: u16, val: u8) {
-        // log::info!(target: "PPUREG", "Write to PPU register: {addr:04X} = {val:02X}");
-
         match addr {
             0 => {
                 // Controller
                 log::info!(
-                    target: "PPUREG",
+                    target: "ppureg",
                     "[PPUCTRL] = b{val:08b}: nmi={nmi}, ppu={ppu}, spr={sprite_size}, bgpat=${bg_pat_addr:04X}, sprpat=${sprite_pat_addr:04X}, addrinc={ppu_addr_incr}, nt_addr=${base_nametable_addr:04X}",
                     nmi = if val & 0x80 != 0 { "t" } else { "f" },
                     ppu = if val & 0x40 != 0 { "t" } else { "f" },
@@ -164,7 +162,7 @@ impl Ppu {
 
             1 => {
                 // Mask
-                log::info!(target: "PPUREG", "[PPUMASK] = b{val:08b}: bgcol={r}{g}{b}, spr_vis={sprite_visible}, bg_vis={bg_visible}, spr_clip={sprite_clip}, bg_clip={bg_clip}, greyscale={greyscale}",
+                log::info!(target: "ppureg", "[PPUMASK] = b{val:08b}: bgcol={r}{g}{b}, spr_vis={sprite_visible}, bg_vis={bg_visible}, spr_clip={sprite_clip}, bg_clip={bg_clip}, greyscale={greyscale}",
                     r = if val & 0x20 != 0 { "R" } else { "-" },
                     g = if val & 0x40 != 0 { "G" } else { "-" },
                     b = if val & 0x80 != 0 { "B" } else { "-" },
@@ -188,13 +186,13 @@ impl Ppu {
             }
             3 => {
                 // OAM address
-                log::info!(target: "PPUREG", "[OAMADDR] <- ${val:02X}");
+                log::info!(target: "ppureg", "[OAMADDR] <- ${val:02X}");
 
                 self.reg.oam_addr = val;
             }
             4 => {
                 // OAM data
-                log::info!(target: "PPUREG", "[OAMDATA] <- ${val:02X}: OAM[${oam_addr:02X}] = ${val:02X}",
+                log::info!(target: "ppureg", "[OAMDATA] <- ${val:02X}: OAM[${oam_addr:02X}] = ${val:02X}",
                     oam_addr = self.reg.oam_addr);
 
                 self.oam[self.reg.oam_addr as usize] = val;
@@ -202,7 +200,7 @@ impl Ppu {
             }
             5 => {
                 // Scroll
-                log::info!(target: "PPUREG", "[PPUSCROLL] <- ${val:02X}");
+                log::info!(target: "ppureg", "[PPUSCROLL] <- ${val:02X}");
 
                 if !self.reg.toggle {
                     self.reg.tmp_addr = (self.reg.tmp_addr & 0x7fe0) | (val as u16 >> 3);
@@ -216,7 +214,7 @@ impl Ppu {
             }
             6 => {
                 // Address
-                log::info!(target: "PPUREG", "[PPUADDR] <- ${val:02X}");
+                log::info!(target: "ppureg", "[PPUADDR] <- ${val:02X}");
 
                 if !self.reg.toggle {
                     self.reg.tmp_addr = (self.reg.tmp_addr & 0x00ff) | ((val as u16 & 0x3f) << 8);
@@ -230,7 +228,7 @@ impl Ppu {
                 // Data
                 let addr = self.reg.cur_addr & 0x3fff;
 
-                log::info!(target: "PPUREG", "[PPUDATA] <- ${val:02X}, CHR[${addr:04X}] <- ${val:02X}");
+                log::info!(target: "ppureg", "[PPUDATA] <- ${val:02X}, CHR[${addr:04X}] <- ${val:02X}");
 
                 self.mapper.borrow_mut().write_chr(addr, val);
 

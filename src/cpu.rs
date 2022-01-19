@@ -617,16 +617,19 @@ impl Cpu {
 
     fn read_u8(&mut self, addr: u16) -> u8 {
         self.counter += 1;
-        self.mem.borrow().read_u8(addr)
-    }
-
-    fn read_u16(&mut self, addr: u16) -> u16 {
-        self.read_u8(addr) as u16 | (self.read_u8(addr + 1) as u16) << 8
+        let ret = self.mem.borrow().read_u8(addr);
+        log::info!(target: "prgmem", "[${addr:04X}] -> ${ret:02X}");
+        ret
     }
 
     fn write_u8(&mut self, addr: u16, val: u8) {
         self.counter += 1;
         self.mem.borrow_mut().write_u8(addr, val);
+        log::info!(target: "prgmem", "[${addr:04X}] <- ${val:02X}");
+    }
+
+    fn read_u16(&mut self, addr: u16) -> u16 {
+        self.read_u8(addr) as u16 | (self.read_u8(addr + 1) as u16) << 8
     }
 
     fn fetch_u8(&mut self) -> u8 {
@@ -663,7 +666,7 @@ impl Cpu {
     }
 
     fn trace(&self) {
-        if !log::log_enabled!(target: "dasm", log::Level::Trace) {
+        if !log::log_enabled!(target: "disasm", log::Level::Trace) {
             return;
         }
 
@@ -673,7 +676,7 @@ impl Cpu {
 
         let disasm = disasm(pc, opc, opr);
 
-        log::trace!(target: "dasm",
+        log::trace!(target: "disasm",
             "{pc:04X}: {disasm:13} | A={a:02X} X={x:02X} Y={y:02X} S={s:02X} {n}{v}{b}{d}{i}{z}{c}",
             pc = self.reg.pc,
             a = self.reg.a,
