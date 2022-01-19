@@ -1,4 +1,8 @@
-use crate::{consts::*, mapper::Mapper, util::Ref};
+use crate::{
+    consts::*,
+    mapper::Mapper,
+    util::{Ref, Wire},
+};
 
 pub struct Ppu {
     reg: Register,
@@ -6,6 +10,11 @@ pub struct Ppu {
     line: usize,
     counter: u64,
     mapper: Ref<dyn Mapper>,
+    wires: Wires,
+}
+
+pub struct Wires {
+    pub nmi: Wire<bool>,
 }
 
 #[derive(Default)]
@@ -13,11 +22,11 @@ struct Register {
     nmi_enable: bool,
     ppu_master: bool,
     sprite_size: bool,
-    bg_pat_adr: bool,
-    sprite_pat_adr: bool,
+    bg_pat_addr: bool,
+    sprite_pat_addr: bool,
     ppu_addr_incr: bool,
-    base_nametable_addr: u8,
 
+    // base_nametable_addr: u8,
     bg_color: u8,
     sprite_visible: bool,
     bg_visible: bool,
@@ -29,8 +38,8 @@ struct Register {
 
     toggle: bool,
     scroll_x: u8,
-    tmp_scroll: u16,
-    scroll: u16,
+    tmp_addr: u16,
+    cur_addr: u16,
 
     vblank: bool,
     sprite0_hit: bool,
@@ -46,13 +55,14 @@ impl Register {
 }
 
 impl Ppu {
-    pub fn new(mapper: Ref<dyn Mapper>) -> Self {
+    pub fn new(mapper: Ref<dyn Mapper>, wires: Wires) -> Self {
         Self {
             reg: Register::new(),
             oam: vec![0x00; 256],
             counter: 0,
             line: 0,
             mapper,
+            wires,
         }
     }
 
@@ -67,58 +77,104 @@ impl Ppu {
                 self.line = 0;
             }
 
-            if self.line == POST_RENDER_LINE {
+            log::info!("line {} starts", self.line);
+
+            if self.line == POST_RENDER_LINE + 1 {
+                log::info!("enter vblank");
                 self.reg.vblank = true;
             }
 
             if self.line == PRE_RENDER_LINE {
+                log::info!("leave vblank");
                 self.reg.vblank = false;
                 self.reg.sprite0_hit = false;
             }
         }
+
+        let nmi_line = !(self.reg.vblank && self.reg.nmi_enable);
+        self.wires.nmi.set(nmi_line);
     }
 
     pub fn read_reg(&mut self, addr: u16) -> u8 {
         match addr {
             2 => {
-                // PPU Status Register (R)
+                // Status
                 let mut ret = 0;
                 ret |= if self.reg.vblank { 0x80 } else { 0 };
                 ret |= if self.reg.sprite0_hit { 0x40 } else { 0 };
                 ret |= if self.reg.sprite_over { 0x20 } else { 0 };
+
                 // FIXME: Least significant bits previously written into a PPU register
                 self.reg.vblank = false;
                 self.reg.toggle = false;
+
+                log::info!(target: "PPUREG", "[PPUSTATUS] -> ${:02X}", ret);
+
                 ret
             }
 
             7 => {
-                // VRAM I/O Register (RW)
-                todo!("Read from $2007");
+                // Data
+                let addr = self.reg.cur_addr & 0x3fff;
+
+                let ret = self.mapper.borrow_mut().read_chr(addr);
+
+                let inc_addr = if self.reg.ppu_addr_incr { 32 } else { 1 };
+                self.reg.cur_addr = self.reg.cur_addr.wrapping_add(inc_addr);
+
+                log::info!(target: "PPUREG", "[PPUDATA], CHR[${addr:04X}] -> ${ret:02X}");
+
+                ret
             }
 
             _ => {
-                log::warn!("Read from PPU register: {addr}");
+                log::info!("Read from invalid PPU register: [{addr}]");
                 0
             }
         }
     }
 
     pub fn write_reg(&mut self, addr: u16, val: u8) {
+        // log::info!(target: "PPUREG", "Write to PPU register: {addr:04X} = {val:02X}");
+
         match addr {
             0 => {
-                // PPU Control Register #1 (W)
+                // Controller
+                log::info!(
+                    target: "PPUREG",
+                    "[PPUCTRL] = b{val:08b}: nmi={nmi}, ppu={ppu}, spr={sprite_size}, bgpat=${bg_pat_addr:04X}, sprpat=${sprite_pat_addr:04X}, addrinc={ppu_addr_incr}, nt_addr=${base_nametable_addr:04X}",
+                    nmi = if val & 0x80 != 0 { "t" } else { "f" },
+                    ppu = if val & 0x40 != 0 { "t" } else { "f" },
+                    sprite_size = if val & 0x20 != 0 { "8x16" } else { "8x8" },
+                    bg_pat_addr = if val & 0x10 != 0 { 0x0000 } else { 0x1000 },
+                    sprite_pat_addr =  if val & 0x08 != 0 { 0x0000 } else { 0x1000 },
+                    ppu_addr_incr =  if val & 0x04 != 0 { 32 } else { 1 },
+                    base_nametable_addr = 0x2000 + (val as u16 & 3) * 0x400,
+                );
+
                 self.reg.nmi_enable = val & 0x80 != 0;
                 self.reg.ppu_master = val & 0x40 != 0;
                 self.reg.sprite_size = val & 0x20 != 0;
-                self.reg.bg_pat_adr = val & 0x10 != 0;
-                self.reg.sprite_pat_adr = val & 0x08 != 0;
+                self.reg.bg_pat_addr = val & 0x10 != 0;
+                self.reg.sprite_pat_addr = val & 0x08 != 0;
                 self.reg.ppu_addr_incr = val & 0x04 != 0;
-                self.reg.base_nametable_addr = val & 0x03;
+
+                self.reg.tmp_addr = (self.reg.tmp_addr & 0x73FF) | ((val as u16 & 3) << 10);
             }
 
             1 => {
-                // PPU Control Register #2 (W)
+                // Mask
+                log::info!(target: "PPUREG", "[PPUMASK] = b{val:08b}: bgcol={r}{g}{b}, spr_vis={sprite_visible}, bg_vis={bg_visible}, spr_clip={sprite_clip}, bg_clip={bg_clip}, greyscale={greyscale}",
+                    r = if val & 0x20 != 0 { "R" } else { "-" },
+                    g = if val & 0x40 != 0 { "G" } else { "-" },
+                    b = if val & 0x80 != 0 { "B" } else { "-" },
+                    sprite_visible = if val & 0x10 != 0 { "t" } else { "f" },
+                    bg_visible = if val & 0x08 != 0 { "t" } else { "f" },
+                    sprite_clip = if val & 0x04 != 0 { "f" } else { "t" },
+                    bg_clip = if val & 0x02 != 0 { "f" } else { "t" },
+                    greyscale = if val & 0x01 != 0 { "t" } else { "f" },
+                );
+
                 self.reg.bg_color = val >> 5;
                 self.reg.sprite_visible = val & 0x10 != 0;
                 self.reg.bg_visible = val & 0x08 != 0;
@@ -127,50 +183,59 @@ impl Ppu {
                 self.reg.color_display = val & 0x01 != 0;
             }
             2 => {
-                // PPU Status Register (R)
+                // Status
                 log::warn!("Write to $2002 = {val:02X}");
             }
             3 => {
-                // SPR-RAM Address Register (W)
+                // OAM address
+                log::info!(target: "PPUREG", "[OAMADDR] <- ${val:02X}");
+
                 self.reg.oam_addr = val;
             }
             4 => {
-                // SPR-RAM I/O Register (W)
+                // OAM data
+                log::info!(target: "PPUREG", "[OAMDATA] <- ${val:02X}: OAM[${oam_addr:02X}] = ${val:02X}",
+                    oam_addr = self.reg.oam_addr);
+
                 self.oam[self.reg.oam_addr as usize] = val;
                 self.reg.oam_addr = self.reg.oam_addr.wrapping_add(1);
             }
             5 => {
-                // VRAM Address Register #1 (W2)
+                // Scroll
+                log::info!(target: "PPUREG", "[PPUSCROLL] <- ${val:02X}");
+
                 if !self.reg.toggle {
-                    self.reg.tmp_scroll = (self.reg.tmp_scroll & 0x7fe0) | (val as u16 >> 3);
+                    self.reg.tmp_addr = (self.reg.tmp_addr & 0x7fe0) | (val as u16 >> 3);
                     self.reg.scroll_x = val & 0x07;
                 } else {
-                    self.reg.tmp_scroll = (self.reg.tmp_scroll & 0x0c1f)
-                        | ((val as u16 & 0xF8) << 2)
-                        | ((val as u16 & 0x07) << 12);
+                    self.reg.tmp_addr = (self.reg.tmp_addr & 0x0c1f)
+                        | (val as u16 & 0xF8) << 5
+                        | (val as u16 & 0x07) << 12;
                 }
                 self.reg.toggle = !self.reg.toggle;
             }
             6 => {
-                // VRAM Address Register #2 (W2)
+                // Address
+                log::info!(target: "PPUREG", "[PPUADDR] <- ${val:02X}");
+
                 if !self.reg.toggle {
-                    self.reg.tmp_scroll =
-                        (self.reg.tmp_scroll & 0x00ff) | ((val as u16 & 0x7f) << 8);
+                    self.reg.tmp_addr = (self.reg.tmp_addr & 0x00ff) | ((val as u16 & 0x3f) << 8);
                 } else {
-                    self.reg.tmp_scroll = (self.reg.tmp_scroll & 0x7f00) | val as u16;
-                    self.reg.scroll = self.reg.tmp_scroll;
+                    self.reg.tmp_addr = (self.reg.tmp_addr & 0x7f00) | val as u16;
+                    self.reg.cur_addr = self.reg.tmp_addr;
                 }
                 self.reg.toggle = !self.reg.toggle;
             }
             7 => {
-                // VRAM I/O Register (RW)
-                let addr = self.reg.scroll & 0x1f;
+                // Data
+                let addr = self.reg.cur_addr & 0x3fff;
+
+                log::info!(target: "PPUREG", "[PPUDATA] <- ${val:02X}, CHR[${addr:04X}] <- ${val:02X}");
+
                 self.mapper.borrow_mut().write_chr(addr, val);
 
-                self.reg.scroll =
-                    self.reg
-                        .scroll
-                        .wrapping_add(if self.reg.ppu_addr_incr { 32 } else { 1 });
+                let inc_addr = if self.reg.ppu_addr_incr { 32 } else { 1 };
+                self.reg.cur_addr = self.reg.cur_addr.wrapping_add(inc_addr);
             }
             _ => unreachable!(),
         }

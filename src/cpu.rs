@@ -1,13 +1,14 @@
-use crate::{memory::MemoryMap, util::Ref};
+use crate::{
+    memory::MemoryMap,
+    util::{Ref, Wire},
+};
 
 const NMI_VECTOR: u16 = 0xFFFA;
 const RST_VECTOR: u16 = 0xFFFC;
 const IRQ_VECTOR: u16 = 0xFFFE;
 
 pub struct Cpu {
-    rst_line: bool,
-    irq_line: bool,
-    nmi_line: bool,
+    nmi_prev: bool,
 
     world: u64,
     counter: u64,
@@ -15,10 +16,17 @@ pub struct Cpu {
     reg: Register,
 
     mem: Ref<MemoryMap>,
+    wires: Wires,
+}
+
+pub struct Wires {
+    pub nmi: Wire<bool>,
+    pub irq: Wire<bool>,
+    pub rst: Wire<bool>,
 }
 
 #[derive(Debug)]
-enum Interrupt {
+pub enum Interrupt {
     Rst,
     Irq,
     Nmi,
@@ -98,16 +106,15 @@ impl Flag {
 }
 
 impl Cpu {
-    pub fn new(mem: Ref<MemoryMap>) -> Self {
+    pub fn new(mem: Ref<MemoryMap>, wires: Wires) -> Self {
         let pc = mem.borrow_mut().read_u16(RST_VECTOR);
         Self {
             mem,
             counter: 0,
             world: 0,
             reg: Register::new(pc),
-            rst_line: false,
-            irq_line: false,
-            nmi_line: false,
+            wires,
+            nmi_prev: false,
         }
     }
 
@@ -120,17 +127,25 @@ impl Cpu {
     }
 
     fn exec_one(&mut self) {
-        // self.dump();
+        self.trace();
 
-        if !self.reg.flag.i {
-            if self.rst_line {
-                self.exec_interrupt(Interrupt::Rst);
-                return;
-            }
-            if self.irq_line {
-                self.exec_interrupt(Interrupt::Irq);
-                return;
-            }
+        let nmi_cur = self.wires.nmi.get();
+        let nmi_prev = self.nmi_prev;
+        self.nmi_prev = nmi_cur;
+
+        if nmi_prev && !nmi_cur {
+            self.exec_interrupt(Interrupt::Nmi);
+            return;
+        }
+
+        if self.wires.irq.get() {
+            self.exec_interrupt(Interrupt::Rst);
+            return;
+        }
+
+        if self.wires.rst.get() {
+            self.exec_interrupt(Interrupt::Irq);
+            return;
         }
 
         let opc = self.fetch_u8();
@@ -586,7 +601,18 @@ impl Cpu {
     }
 
     fn exec_interrupt(&mut self, interrupt: Interrupt) {
-        todo!("interrupt: {interrupt:?}");
+        log::info!("Interrupt: {:?}", interrupt);
+
+        let vect = match interrupt {
+            Interrupt::Rst => RST_VECTOR,
+            Interrupt::Irq => IRQ_VECTOR,
+            Interrupt::Nmi => NMI_VECTOR,
+        };
+
+        self.push_u16(self.reg.pc);
+        self.push_u8(self.reg.flag.get_u8());
+        self.reg.pc = self.read_u16(vect);
+        self.reg.flag.i = true;
     }
 
     fn read_u8(&mut self, addr: u16) -> u8 {
@@ -636,18 +662,24 @@ impl Cpu {
         lo | (hi << 8)
     }
 
-    fn dump(&self) {
+    fn trace(&self) {
+        if !log::log_enabled!(target: "dasm", log::Level::Trace) {
+            return;
+        }
+
         let pc = self.reg.pc;
         let opc = self.mem.borrow().read_u8(pc);
         let opr = self.mem.borrow().read_u16(pc + 1);
 
         let disasm = disasm(pc, opc, opr);
 
-        println!(
-            "{pc:04X} | {disasm:13} | A:{a:02X} X:{x:02X} Y:{y:02X} S:{s:02X} {n}{v}{b}{d}{i}{z}{c}",
+        log::trace!(target: "dasm",
+            "{pc:04X}: {disasm:13} | A={a:02X} X={x:02X} Y={y:02X} S={s:02X} {n}{v}{b}{d}{i}{z}{c}",
+            pc = self.reg.pc,
             a = self.reg.a,
             x = self.reg.x,
             y = self.reg.y,
+            s = self.reg.s,
             n = if self.reg.flag.n { 'N' } else { '-' },
             v = if self.reg.flag.v { 'V' } else { '-' },
             b = if self.reg.flag.b { 'B' } else { '-' },
@@ -655,8 +687,6 @@ impl Cpu {
             i = if self.reg.flag.i { 'I' } else { '-' },
             z = if self.reg.flag.z { 'Z' } else { '-' },
             c = if self.reg.flag.c { 'C' } else { '-' },
-            s = self.reg.s,
-            pc = self.reg.pc
         );
     }
 }

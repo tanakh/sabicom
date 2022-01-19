@@ -22,8 +22,10 @@ use std::{collections::VecDeque, path::PathBuf, time::Duration};
 const SCALING: u32 = 2;
 const FPS: f64 = 60.0;
 
-#[argopt::cmd(verbose)]
+#[argopt::cmd]
 fn main(file: PathBuf) -> Result<()> {
+    env_logger::builder().format_timestamp(None).init();
+
     let dat = std::fs::read(file)?;
 
     let rom = rom::Rom::from_bytes(&dat)?;
@@ -100,7 +102,7 @@ fn main(file: PathBuf) -> Result<()> {
 
         {
             let fps_tex = font
-                .render(&format!("{:.2}", timer.fps()))
+                .render(&format!("{:.02}", timer.fps()))
                 .blended(Color::WHITE)?
                 .as_texture(&texture_creator)?;
 

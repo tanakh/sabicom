@@ -133,7 +133,7 @@ impl MemoryController {
                 let ix = self.chr_page[page] + (addr & 0x03ff) as usize;
 
                 if !self.rom.borrow().chr_rom.is_empty() {
-                    panic!("Write to CHR ROM");
+                    panic!("Write to CHR ROM: (${addr:04X}) = ${val:02X}");
                 } else {
                     self.chr_ram[ix] = val;
                 }

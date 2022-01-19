@@ -1,12 +1,12 @@
 use crate::{
     apu::Apu,
     consts::*,
-    cpu::Cpu,
+    cpu::{self, Cpu},
     mapper::create_mapper,
     memory::MemoryMap,
-    ppu::Ppu,
+    ppu::{self, Ppu},
     rom::Rom,
-    util::{clone_ref, wrap_ref, FrameBuffer, Ref},
+    util::{clone_ref, wrap_ref, FrameBuffer, Ref, Wire},
 };
 
 pub struct Nes {
@@ -25,11 +25,27 @@ impl Nes {
         let rom = wrap_ref(rom);
         let mapper = create_mapper(clone_ref(&rom));
 
-        let ppu = wrap_ref(Ppu::new(clone_ref(&mapper)));
+        let nmi_wire = Wire::new(false);
+        let irq_wire = Wire::new(false);
+        let rst_wire = Wire::new(false);
+
+        let ppu = wrap_ref(Ppu::new(
+            clone_ref(&mapper),
+            ppu::Wires {
+                nmi: nmi_wire.clone(),
+            },
+        ));
         let apu = wrap_ref(Apu::new());
 
         let mem = wrap_ref(MemoryMap::new(clone_ref(&ppu), clone_ref(&apu), mapper));
-        let cpu = Cpu::new(clone_ref(&mem));
+        let cpu = Cpu::new(
+            clone_ref(&mem),
+            cpu::Wires {
+                nmi: nmi_wire.clone(),
+                irq: irq_wire.clone(),
+                rst: rst_wire.clone(),
+            },
+        );
 
         let frame_buf = FrameBuffer::new(SCREEN_WIDTH, SCREEN_HEIGHT);
 

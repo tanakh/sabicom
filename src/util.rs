@@ -50,3 +50,25 @@ impl FrameBuffer {
         self.buf[y * self.width + x] = color;
     }
 }
+
+pub struct Wire<T>(Ref<T>);
+
+impl<T: Clone> Wire<T> {
+    pub fn new(v: T) -> Self {
+        Self(wrap_ref(v))
+    }
+
+    pub fn get(&self) -> T {
+        self.0.borrow().clone()
+    }
+
+    pub fn set(&self, v: T) {
+        *self.0.borrow_mut() = v;
+    }
+}
+
+impl<T> Clone for Wire<T> {
+    fn clone(&self) -> Self {
+        Self(clone_ref(&self.0))
+    }
+}
