@@ -474,12 +474,12 @@ impl Cpu {
                 exec_op!(st, y, $addr)
             }};
 
+            (mov, s, $src:ident) => {{
+                self.reg.s = self.reg.$src;
+            }};
             (mov, $dest:ident, $src:ident) => {{
                 self.reg.$dest = self.reg.$src;
                 self.reg.flag.set_nz(self.reg.$dest);
-            }};
-            (mov, s, $src:ident) => {{
-                self.reg.s = self.reg.$src;
             }};
             (TAX) => {{
                 exec_op!(mov, x, a);

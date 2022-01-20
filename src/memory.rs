@@ -143,7 +143,7 @@ impl MemoryController {
                 }
             }
             0x2000..=0x3eff => {
-                let page = (addr as usize & 0x1fff) / 0x400;
+                let page = (addr as usize & 0x0fff) / 0x400;
                 let ofs = addr as usize & 0x03ff;
                 let ix = self.nametable_page[page] + ofs;
                 self.nametable[ix]
@@ -162,13 +162,13 @@ impl MemoryController {
                 let ix = self.chr_page[page] + (addr & 0x03ff) as usize;
 
                 if !self.rom.borrow().chr_rom.is_empty() {
-                    panic!("Write to CHR ROM: (${addr:04X}) = ${data:02X}");
+                    log::warn!("Write to CHR ROM: (${addr:04X}) = ${data:02X}");
                 } else {
                     self.chr_ram[ix] = data;
                 }
             }
             0x2000..=0x3eff => {
-                let page = (addr as usize & 0x1fff) / 0x400;
+                let page = (addr as usize & 0x0fff) / 0x400;
                 let ofs = addr as usize & 0x03ff;
                 let ix = self.nametable_page[page] + ofs;
                 self.nametable[ix] = data;
