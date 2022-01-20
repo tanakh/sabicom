@@ -1,13 +1,13 @@
-use crate::{rom::Rom, util::Ref};
+use crate::{memory::MemoryController, rom::Rom, util::Ref};
 
 pub struct NullMapper {
-    ctrl: super::MemoryController,
+    ctrl: MemoryController,
 }
 
 impl NullMapper {
     pub fn new(rom: Ref<Rom>) -> Self {
         Self {
-            ctrl: super::MemoryController::new(rom),
+            ctrl: MemoryController::new(rom),
         }
     }
 }
@@ -22,7 +22,7 @@ impl super::Mapper for NullMapper {
     }
 
     fn write_prg(&mut self, addr: u16, data: u8) {
-        log::warn!("write to PRG: {addr:04X} {data:02X}");
+        self.ctrl.write_prg(addr, data);
     }
 
     fn write_chr(&mut self, addr: u16, data: u8) {

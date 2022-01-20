@@ -47,8 +47,8 @@ impl Register {
             a: 0,
             x: 0,
             y: 0,
-            s: 0xff,
-            pc: 0xff,
+            s: 0,
+            pc: 0,
             flag: Flag::new(),
         }
     }
@@ -59,7 +59,6 @@ struct Flag {
     z: bool,
     i: bool,
     d: bool,
-    b: bool,
     v: bool,
     n: bool,
 }
@@ -69,9 +68,8 @@ impl Flag {
         Self {
             c: false,
             z: false,
-            i: true,
+            i: false,
             d: false,
-            b: true,
             v: false,
             n: false,
         }
@@ -80,18 +78,17 @@ impl Flag {
     fn set_u8(&mut self, v: u8) {
         self.n = (v & 0x80) != 0;
         self.v = (v & 0x40) != 0;
-        self.b = (v & 0x10) != 0;
         self.d = (v & 0x08) != 0;
         self.i = (v & 0x04) != 0;
         self.z = (v & 0x02) != 0;
         self.c = (v & 0x01) != 0;
     }
 
-    fn get_u8(&self) -> u8 {
-        let mut v = 0;
+    fn get_u8(&self, b: u8) -> u8 {
+        let mut v = 0x20;
         v |= if self.n { 0x80 } else { 0 };
         v |= if self.v { 0x40 } else { 0 };
-        v |= if self.b { 0x10 } else { 0 };
+        v |= b << 4;
         v |= if self.d { 0x08 } else { 0 };
         v |= if self.i { 0x04 } else { 0 };
         v |= if self.z { 0x02 } else { 0 };
@@ -115,7 +112,12 @@ impl Cpu {
             wires,
             nmi_prev: false,
         };
-        ret.exec_interrupt(Interrupt::Rst);
+        ret.exec_interrupt(Interrupt::Rst, false);
+
+        if log::log_enabled!(target: "disasm-nestest", log::Level::Trace) {
+            ret.reg.pc = 0xC000;
+        }
+
         ret
     }
 
@@ -135,17 +137,17 @@ impl Cpu {
         self.nmi_prev = nmi_cur;
 
         if nmi_prev && !nmi_cur {
-            self.exec_interrupt(Interrupt::Nmi);
+            self.exec_interrupt(Interrupt::Nmi, false);
             return;
         }
 
         if self.wires.irq.get() {
-            self.exec_interrupt(Interrupt::Rst);
+            self.exec_interrupt(Interrupt::Rst, false);
             return;
         }
 
         if self.wires.rst.get() {
-            self.exec_interrupt(Interrupt::Irq);
+            self.exec_interrupt(Interrupt::Irq, false);
             return;
         }
 
@@ -205,14 +207,18 @@ impl Cpu {
         macro_rules! zpxi {
             () => {{
                 let a = self.fetch_u8().wrapping_add(self.reg.x);
-                self.read_u16(a as u16)
+                let lo = self.read_u8(a as u16);
+                let hi = self.read_u8(a.wrapping_add(1) as u16);
+                lo as u16 | (hi as u16) << 8
             }};
         }
 
         macro_rules! zpiy {
             () => {{
                 let a = self.fetch_u8();
-                self.read_u16(a as u16) + self.reg.y as u16
+                let lo = self.read_u8(a as u16);
+                let hi = self.read_u8(a.wrapping_add(1) as u16);
+                (lo as u16 | (hi as u16) << 8) + self.reg.y as u16
             }};
         }
 
@@ -348,7 +354,7 @@ impl Cpu {
         macro_rules! rol {
             ($var:expr) => {{
                 let t = $var;
-                $var = ($var << 1) | self.reg.flag.c as u8;
+                $var = (t << 1) | self.reg.flag.c as u8;
                 self.reg.flag.c = t & 0x80 != 0;
                 self.reg.flag.set_nz($var);
             }};
@@ -357,7 +363,7 @@ impl Cpu {
         macro_rules! ror {
             ($var:expr) => {{
                 let t = $var;
-                $var = ($var >> 1) | (self.reg.flag.c as u8) << 7;
+                $var = (t >> 1) | (self.reg.flag.c as u8) << 7;
                 self.reg.flag.c = t & 1 != 0;
                 self.reg.flag.set_nz($var);
             }};
@@ -572,8 +578,8 @@ impl Cpu {
             0x58 => self.reg.flag.i = false, // CLI
             0xB8 => self.reg.flag.v = false, // CLV
 
-            0x48 => self.push_u8(self.reg.a),             // PHA
-            0x08 => self.push_u8(self.reg.flag.get_u8()), // PHP
+            0x48 => self.push_u8(self.reg.a),              // PHA
+            0x08 => self.push_u8(self.reg.flag.get_u8(3)), // PHP
 
             // PLA
             0x68 => {
@@ -588,20 +594,19 @@ impl Cpu {
 
             // BRK
             0x00 => {
-                self.reg.flag.b = true;
                 self.reg.pc = self.reg.pc.wrapping_add(1);
-                self.exec_interrupt(Interrupt::Irq);
+                self.exec_interrupt(Interrupt::Irq, true);
             }
 
             0xEA => self.counter += 1, // NOP
 
             _ => {
-                panic!("undefined opcode: {opc:02x}");
+                log::warn!("invalid opcode: ${opc:02X}");
             }
         }
     }
 
-    fn exec_interrupt(&mut self, interrupt: Interrupt) {
+    fn exec_interrupt(&mut self, interrupt: Interrupt, brk: bool) {
         log::info!("Interrupt: {:?}", interrupt);
 
         let vect = match interrupt {
@@ -610,15 +615,10 @@ impl Cpu {
             Interrupt::Nmi => NMI_VECTOR,
         };
 
-        if matches!(interrupt, Interrupt::Rst) {
-            self.reg = Register::new();
-            self.reg.pc = self.read_u16(vect);
-        } else {
-            self.push_u16(self.reg.pc);
-            self.push_u8(self.reg.flag.get_u8());
-            self.reg.pc = self.read_u16(vect);
-            self.reg.flag.i = true;
-        }
+        self.push_u16(self.reg.pc);
+        self.push_u8(self.reg.flag.get_u8(if brk { 3 } else { 2 }));
+        self.reg.pc = self.read_u16(vect);
+        self.reg.flag.i = true;
     }
 
     fn read_u8(&mut self, addr: u16) -> u8 {
@@ -645,9 +645,9 @@ impl Cpu {
     }
 
     fn fetch_u16(&mut self) -> u16 {
-        let ret = self.read_u16(self.reg.pc);
-        self.reg.pc = self.reg.pc.wrapping_add(2);
-        ret
+        let lo = self.fetch_u8();
+        let hi = self.fetch_u8();
+        lo as u16 | (hi as u16) << 8
     }
 
     fn push_u8(&mut self, data: u8) {
@@ -672,7 +672,9 @@ impl Cpu {
     }
 
     fn trace(&self) {
-        if !log::log_enabled!(target: "disasm", log::Level::Trace) {
+        if !log::log_enabled!(target: "disasm", log::Level::Trace)
+            && !log::log_enabled!(target: "disasm-nestest", log::Level::Trace)
+        {
             return;
         }
 
@@ -681,10 +683,10 @@ impl Cpu {
         let opr =
             self.mem.borrow().read(pc + 1) as u16 | (self.mem.borrow().read(pc + 2) as u16) << 8;
 
-        let disasm = disasm(pc, opc, opr);
+        let asm = disasm(pc, opc, opr);
 
         log::trace!(target: "disasm",
-            "{pc:04X}: {disasm:13} | A={a:02X} X={x:02X} Y={y:02X} S={s:02X} {n}{v}{b}{d}{i}{z}{c}",
+            "{pc:04X}: {asm:13} | A={a:02X} X={x:02X} Y={y:02X} S={s:02X} {n}{v}{d}{i}{z}{c}",
             pc = self.reg.pc,
             a = self.reg.a,
             x = self.reg.x,
@@ -692,109 +694,179 @@ impl Cpu {
             s = self.reg.s,
             n = if self.reg.flag.n { 'N' } else { '-' },
             v = if self.reg.flag.v { 'V' } else { '-' },
-            b = if self.reg.flag.b { 'B' } else { '-' },
             d = if self.reg.flag.d { 'D' } else { '-' },
             i = if self.reg.flag.i { 'I' } else { '-' },
             z = if self.reg.flag.z { 'Z' } else { '-' },
             c = if self.reg.flag.c { 'C' } else { '-' },
         );
+
+        let bytes = match INSTR_TABLE[opc as usize].1.len() {
+            1 => format!("{opc:02X}"),
+            2 => format!("{opc:02X} {:02X}", opr & 0xff),
+            3 => format!("{opc:02X} {:02X} {:02X}", opr & 0xff, opr >> 8),
+            _ => unreachable!(),
+        };
+
+        let read_u8 = |addr: u16| {
+            if addr < 0x2000 || addr >= 0x8000 {
+                format!("{:02X}", self.mem.borrow().read(addr))
+            } else {
+                format!("??")
+            }
+        };
+
+        let ctx = match &INSTR_TABLE[opc as usize].1 {
+            AddrMode::ZPG => format!(" = {}", read_u8(opr & 0xff)),
+            AddrMode::ABS => {
+                if !matches!(INSTR_TABLE[opc as usize].0, "JMP" | "JSR") {
+                    format!(" = {}", read_u8(opr))
+                } else {
+                    "".to_string()
+                }
+            }
+            AddrMode::IND => format!(" = {}", read_u8(opr)),
+            AddrMode::ZPX => {
+                let addr = (opr as u8).wrapping_add(self.reg.x);
+                format!(" @ {addr:02X} = {}", read_u8(addr as u16))
+            }
+            AddrMode::ZPY => {
+                let addr = (opr as u8).wrapping_add(self.reg.y);
+                format!(" @ {addr:02X} = {}", read_u8(addr as u16))
+            }
+            AddrMode::ABX => {
+                let addr = opr.wrapping_add(self.reg.x as u16);
+                format!(" @ {addr:04X} = {}", read_u8(addr as u16))
+            }
+            AddrMode::ABY => {
+                let addr = opr.wrapping_add(self.reg.x as u16);
+                format!(" @ {addr:04X} = {}", read_u8(addr as u16))
+            }
+            AddrMode::INX => {
+                let addr = (opr as u8).wrapping_add(self.reg.x);
+                let ind = self.mem.borrow().read(addr as u16) as u16
+                    | (self.mem.borrow().read(addr.wrapping_add(1) as u16) as u16) << 8;
+                format!(" @ {addr:02X} = {ind:04X} = {}", read_u8(ind))
+            }
+            AddrMode::INY => {
+                let ind = self.mem.borrow().read((opr as u8) as u16) as u16
+                    | (self.mem.borrow().read((opr as u8).wrapping_add(1) as u16) as u16) << 8;
+                let addr = ind + self.reg.y as u16;
+                format!(" = {ind:04X} @ {addr:04X} = {}", read_u8(addr))
+            }
+
+            AddrMode::IMP | AddrMode::ACC | AddrMode::IMM | AddrMode::REL | AddrMode::UNK => {
+                "".to_string()
+            }
+        };
+
+        let asm = format!("{}{}", asm, ctx);
+
+        log::trace!(target: "disasm-nestest",
+            "{pc:04X}  {bytes:8}  {asm:30}  A:{a:02X} X:{x:02X} Y:{y:02X} P:{p:02X} SP:{s:02X}",
+            pc = self.reg.pc,
+            a = self.reg.a,
+            x = self.reg.x,
+            y = self.reg.y,
+            s = self.reg.s,
+            p = self.reg.flag.get_u8(2),
+        );
     }
 }
 
+enum AddrMode {
+    IMP, // Implicit
+    ACC, // Accumulator
+    IMM, // Immediate: #v
+    ZPG, // Zero Page: d
+    ABS, // Absolute: a
+    REL, // Relative: label
+    IND, // Indirect: (d)
+    ZPX, // Zero Page indexed: d,X
+    ZPY, // Zero Page indexed: d,Y
+    ABX, // Absolute indexed: a,X
+    ABY, // Absolute indexed: a,Y
+    INX, // Indirect indexed: (d,X)
+    INY, // Indirect indexed: (d),Y
+    UNK,
+}
+
+impl AddrMode {
+    fn len(&self) -> usize {
+        use AddrMode::*;
+        match self {
+            IMP | ACC => 1,
+            IMM | ZPG | REL | ZPX | ZPY | INX | INY => 2,
+            ABS | IND | ABX | ABY => 3,
+            UNK => 1,
+        }
+    }
+}
+
+macro_rules! instr_table {
+    ($($mne:ident $addr_mode:ident,)*) => {{
+        [$(
+            (stringify!($mne), AddrMode::$addr_mode),
+        )*]
+    }}
+}
+
+#[rustfmt::skip]
+const INSTR_TABLE: [(&str, AddrMode); 256] = instr_table! {
+    BRK IMM, ORA INX, UNK UNK, UNK UNK, UNK UNK, ORA ZPG, ASL ZPG, UNK UNK,
+    PHP IMP, ORA IMM, ASL ACC, UNK UNK, UNK UNK, ORA ABS, ASL ABS, UNK UNK,
+    BPL REL, ORA INY, UNK UNK, UNK UNK, UNK UNK, ORA ZPX, ASL ZPX, UNK UNK,
+    CLC IMP, ORA ABY, UNK UNK, UNK UNK, UNK UNK, ORA ABX, ASL ABX, UNK UNK,
+    JSR ABS, AND INX, UNK UNK, UNK UNK, BIT ZPG, AND ZPG, ROL ZPG, UNK UNK,
+    PLP IMP, AND IMM, ROL ACC, UNK UNK, BIT ABS, AND ABS, ROL ABS, UNK UNK,
+    BMI REL, AND INY, UNK UNK, UNK UNK, UNK UNK, AND ZPX, ROL ZPX, UNK UNK,
+    SEC IMP, AND ABY, UNK UNK, UNK UNK, UNK UNK, AND ABX, ROL ABX, UNK UNK,
+    RTI IMP, EOR INX, UNK UNK, UNK UNK, UNK UNK, EOR ZPG, LSR ZPG, UNK UNK,
+    PHA IMP, EOR IMM, LSR ACC, UNK UNK, JMP ABS, EOR ABS, LSR ABS, UNK UNK,
+    BVC REL, EOR INY, UNK UNK, UNK UNK, UNK UNK, EOR ZPX, LSR ZPX, UNK UNK,
+    CLI IMP, EOR ABY, UNK UNK, UNK UNK, UNK UNK, EOR ABX, LSR ABX, UNK UNK,
+    RTS IMP, ADC INX, UNK UNK, UNK UNK, UNK UNK, ADC ZPG, ROR ZPG, UNK UNK,
+    PLA IMP, ADC IMM, ROR ACC, UNK UNK, JMP IND, ADC ABS, ROR ABS, UNK UNK,
+    BVS REL, ADC INY, UNK UNK, UNK UNK, UNK UNK, ADC ZPX, ROR ZPX, UNK UNK,
+    SEI IMP, ADC ABY, UNK UNK, UNK UNK, UNK UNK, ADC ABX, ROR ABX, UNK UNK,
+    UNK UNK, STA INX, UNK UNK, UNK UNK, STY ZPG, STA ZPG, STX ZPG, UNK UNK,
+    DEY IMP, UNK UNK, TXA IMP, UNK UNK, STY ABS, STA ABS, STX ABS, UNK UNK,
+    BCC REL, STA INY, UNK UNK, UNK UNK, STY ZPX, STA ZPX, STX ZPY, UNK UNK,
+    TYA IMP, STA ABY, TXS IMP, UNK UNK, UNK UNK, STA ABX, UNK UNK, UNK UNK,
+    LDY IMM, LDA INX, LDX IMM, UNK UNK, LDY ZPG, LDA ZPG, LDX ZPG, UNK UNK,
+    TAY IMP, LDA IMM, TAX IMP, UNK UNK, LDY ABS, LDA ABS, LDX ABS, UNK UNK,
+    BCS REL, LDA INY, UNK UNK, UNK UNK, LDY ZPX, LDA ZPX, LDX ZPY, UNK UNK,
+    CLV IMP, LDA ABY, TSX IMP, UNK UNK, LDY ABX, LDA ABX, LDX ABY, UNK UNK,
+    CPY IMM, CMP INX, UNK UNK, UNK UNK, CPY ZPG, CMP ZPG, DEC ZPG, UNK UNK,
+    INY IMP, CMP IMM, DEX IMP, UNK UNK, CPY ABS, CMP ABS, DEC ABS, UNK UNK,
+    BNE REL, CMP INY, UNK UNK, UNK UNK, UNK UNK, CMP ZPX, DEC ZPX, UNK UNK,
+    CLD IMP, CMP ABY, UNK UNK, UNK UNK, UNK UNK, CMP ABX, DEC ABX, UNK UNK,
+    CPX IMM, SBC INX, UNK UNK, UNK UNK, CPX ZPG, SBC ZPG, INC ZPG, UNK UNK,
+    INX IMP, SBC IMM, NOP IMP, UNK UNK, CPX ABS, SBC ABS, INC ABS, UNK UNK,
+    BEQ REL, SBC INY, UNK UNK, UNK UNK, UNK UNK, SBC ZPX, INC ZPX, UNK UNK,
+    SED IMP, SBC ABY, UNK UNK, UNK UNK, UNK UNK, SBC ABX, INC ABX, UNK UNK,
+};
+
 fn disasm(pc: u16, opc: u8, opr: u16) -> String {
-    #[rustfmt::skip]
-    const MNEMONIC: &[&str] = &[
-        "BRK", "ORA", "UNK", "UNK", "UNK", "ORA", "ASL", "UNK",
-        "PHP", "ORA", "ASL", "UNK", "UNK", "ORA", "ASL", "UNK",
-        "BPL", "ORA", "UNK", "UNK", "UNK", "ORA", "ASL", "UNK",
-        "CLC", "ORA", "UNK", "UNK", "UNK", "ORA", "ASL", "UNK",
-        "JSR", "AND", "UNK", "UNK", "BIT", "AND", "ROL", "UNK",
-        "PLP", "AND", "ROL", "UNK", "BIT", "AND", "ROL", "UNK",
-        "BMI", "AND", "UNK", "UNK", "UNK", "AND", "ROL", "UNK",
-        "SEC", "AND", "UNK", "UNK", "UNK", "AND", "ROL", "UNK",
-        "RTI", "EOR", "UNK", "UNK", "UNK", "EOR", "LSR", "UNK",
-        "PHA", "EOR", "LSR", "UNK", "JMP", "EOR", "LSR", "UNK",
-        "BVC", "EOR", "UNK", "UNK", "UNK", "EOR", "LSR", "UNK",
-        "CLI", "EOR", "UNK", "UNK", "UNK", "EOR", "LSR", "UNK",
-        "RTS", "ADC", "UNK", "UNK", "UNK", "ADC", "ROR", "UNK",
-        "PLA", "ADC", "ROR", "UNK", "JMP", "ADC", "ROR", "UNK",
-        "BVS", "ADC", "UNK", "UNK", "UNK", "ADC", "ROR", "UNK",
-        "SEI", "ADC", "UNK", "UNK", "UNK", "ADC", "ROR", "UNK",
-        "UNK", "STA", "UNK", "UNK", "STY", "STA", "STX", "UNK",
-        "DEY", "UNK", "TXA", "UNK", "STY", "STA", "STX", "UNK",
-        "BCC", "STA", "UNK", "UNK", "STY", "STA", "STX", "UNK",
-        "TYA", "STA", "TXS", "UNK", "UNK", "STA", "UNK", "UNK",
-        "LDY", "LDA", "LDX", "UNK", "LDY", "LDA", "LDX", "UNK",
-        "TAY", "LDA", "TAX", "UNK", "LDY", "LDA", "LDX", "UNK",
-        "BCS", "LDA", "UNK", "UNK", "LDY", "LDA", "LDX", "UNK",
-        "CLV", "LDA", "TSX", "UNK", "LDY", "LDA", "LDX", "UNK",
-        "CPY", "CMP", "UNK", "UNK", "CPY", "CMP", "DEC", "UNK",
-        "INY", "CMP", "DEX", "UNK", "CPY", "CMP", "DEC", "UNK",
-        "BNE", "CMP", "UNK", "UNK", "UNK", "CMP", "DEC", "UNK",
-        "CLD", "CMP", "UNK", "UNK", "UNK", "CMP", "DEC", "UNK",
-        "CPX", "SBC", "UNK", "UNK", "CPX", "SBC", "INC", "UNK",
-        "INX", "SBC", "NOP", "UNK", "CPX", "SBC", "INC", "UNK",
-        "BEQ", "SBC", "UNK", "UNK", "UNK", "SBC", "INC", "UNK",
-        "SED", "SBC", "UNK", "UNK", "UNK", "SBC", "INC", "UNK",
-    ];
-
-    #[rustfmt::skip]
-    const MODE: &[usize] = &[
-         0, 12, 0, 0, 0, 8, 8, 0,  0, 1, 2, 0, 0, 3, 3, 0,
-        14, 13, 0, 0, 0, 9, 9, 0,  0, 5, 0, 0, 0, 4, 4, 0,
-         3, 12, 0, 0, 8, 8, 8, 0,  0, 1, 2, 0, 3, 3, 3, 0,
-        14, 13, 0, 0, 0, 9, 9, 0,  0, 5, 0, 0, 0, 4, 4, 0,
-         0, 12, 0, 0, 0, 8, 8, 0,  0, 1, 2, 0, 3, 3, 3, 0,
-        14, 13, 0, 0, 0, 9, 9, 0,  0, 5, 0, 0, 0, 4, 4, 0,
-         0, 12, 0, 0, 0, 8, 8, 0,  0, 1, 2, 0, 7, 3, 3, 0,
-        14, 13, 0, 0, 0, 9, 9, 0,  0, 5, 0, 0, 0, 4, 4, 0,
-         0, 12, 0, 0, 8, 8, 8, 0,  0, 0, 0, 0, 3, 3, 3, 0,
-        14, 13, 0, 0, 9, 9,10, 0,  0, 5, 0, 0, 0, 4, 0, 0,
-         1, 12, 1, 0, 8, 8, 8, 0,  0, 1, 0, 0, 3, 3, 3, 0,
-        14, 13, 0, 0, 9, 9,10, 0,  0, 5, 0, 0, 4, 4, 5, 0,
-         1, 12, 0, 0, 8, 8, 8, 0,  0, 1, 0, 0, 3, 3, 3, 0,
-        14, 13, 0, 0, 0, 9, 9, 0,  0, 5, 0, 0, 0, 4, 4, 0,
-         1, 12, 0, 0, 8, 8, 8, 0,  0, 1, 0, 0, 3, 3, 3, 0,
-        14, 13, 0, 0, 0, 9, 9, 0,  0, 5, 0, 0, 0, 4, 4, 0,
-    ];
-
     let opc = opc as usize;
-    let mne = MNEMONIC[opc];
+    let (mne, addr_mode) = &INSTR_TABLE[opc];
 
-    match MODE[opc] {
-        // Implied
-        0 => mne.to_string(),
-        // Immidiate #$xx
-        1 => format!("{mne} #${:02X}", opr & 0xff),
-        // Accumerate
-        2 => format!("{mne} A"),
-        // Absolute $xxxx
-        3 => format!("{mne} ${opr:04X}"),
-        // Absolute X $xxxx,X
-        4 => format!("{mne} ${opr:04X},X"),
-        // Absolute Y $xxxx,Y
-        5 => format!("{mne} ${opr:04X},Y"),
-        // Absolute X indirected ($xxxx,X)
-        6 => format!("{mne} (${opr:04X},X)"),
-        // Absolute indirected
-        7 => format!("{mne} (${opr:04X})"),
-        // Zero page $xx
-        8 => format!("{mne} ${:02X}", opr & 0xff),
-        // Zero page indexed X $xx,X
-        9 => format!("{mne} ${:02X},X", opr & 0xff),
-        // Zero page indexed Y $xx,Y
-        10 => format!("{mne} ${:02X},Y", opr & 0xff),
-        // Zero page indirected ($xx)
-        11 => format!("{mne} (${:02X})", opr & 0xff),
-        // Zero page indexed indirected ($xx,X)
-        12 => format!("{mne} (${:02X},X)", opr & 0xff),
-        // Zero page indirected indexed ($xx),Y
-        13 => format!("{mne} (${:02X}),Y", opr & 0xff),
-        // Relative
-        14 => format!(
-            "{mne} ${:04X}",
-            pc.wrapping_add((opr & 0xff) as i8 as u16).wrapping_add(2)
-        ),
-        _ => unreachable!(),
+    match addr_mode {
+        AddrMode::IMP => mne.to_string(),
+        AddrMode::IMM => format!("{mne} #${:02X}", opr & 0xff),
+        AddrMode::ACC => format!("{mne} A"),
+        AddrMode::ABS => format!("{mne} ${opr:04X}"),
+        AddrMode::ABX => format!("{mne} ${opr:04X},X"),
+        AddrMode::ABY => format!("{mne} ${opr:04X},Y"),
+        AddrMode::IND => format!("{mne} (${opr:04X})"),
+        AddrMode::ZPG => format!("{mne} ${:02X}", opr & 0xff),
+        AddrMode::ZPX => format!("{mne} ${:02X},X", opr & 0xff),
+        AddrMode::ZPY => format!("{mne} ${:02X},Y", opr & 0xff),
+        AddrMode::INX => format!("{mne} (${:02X},X)", opr & 0xff),
+        AddrMode::INY => format!("{mne} (${:02X}),Y", opr & 0xff),
+        AddrMode::REL => {
+            let addr = pc.wrapping_add((opr & 0xff) as i8 as u16).wrapping_add(2);
+            format!("{mne} ${:04X}", addr)
+        }
+        AddrMode::UNK => format!("{mne} ???"),
     }
 }

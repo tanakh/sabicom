@@ -234,6 +234,10 @@ impl Rom {
     }
 
     pub fn print_info(&self) {
+        if !log::log_enabled!(log::Level::Info) {
+            return;
+        }
+
         let to_si = |x| ByteSize(x as _).to_string_as(true);
         let yn = |b| if b { "Yes" } else { "No" };
 
@@ -260,6 +264,6 @@ impl Rom {
 
         table.set_titles(row!["ROM File Info"]);
         table.set_format(*format::consts::FORMAT_NO_LINESEP_WITH_TITLE);
-        table.printstd();
+        log::info!("{}", table);
     }
 }

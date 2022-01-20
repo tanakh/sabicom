@@ -1,4 +1,4 @@
-use crate::{rom::Rom, util::Ref};
+use crate::{memory::MemoryController, rom::Rom, util::Ref};
 
 pub struct Mmc1 {
     mirriring: Mirroring,
@@ -6,7 +6,7 @@ pub struct Mmc1 {
     chr_rom_bank_mode: ChrRomBankMode,
     buf: u8,
     cnt: usize,
-    ctrl: super::MemoryController,
+    ctrl: MemoryController,
 }
 
 enum Mirroring {
@@ -29,7 +29,7 @@ enum ChrRomBankMode {
 
 impl Mmc1 {
     pub fn new(rom: Ref<Rom>) -> Self {
-        let ctrl = super::MemoryController::new(rom);
+        let ctrl = MemoryController::new(rom);
 
         Self {
             mirriring: Mirroring::OneScreenLow,

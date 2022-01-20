@@ -13,7 +13,7 @@ pub struct Nes {
     cpu: Cpu,
     ppu: Ref<Ppu>,
     apu: Ref<Apu>,
-    mem: Ref<MemoryMap>,
+    pub mem: Ref<MemoryMap>,
     rom: Ref<Rom>,
     frame_buf: FrameBuffer,
 }
@@ -68,6 +68,10 @@ impl Nes {
             self.cpu.tick();
             self.ppu.borrow_mut().tick();
         }
+
+        self.frame_buf
+            .buf
+            .copy_from_slice(&self.ppu.borrow().frame_buf.buf);
     }
 
     pub fn get_frame_buf(&self) -> &FrameBuffer {

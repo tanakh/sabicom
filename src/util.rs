@@ -10,7 +10,7 @@ pub fn clone_ref<T: ?Sized>(v: &Ref<T>) -> Ref<T> {
     Rc::clone(v)
 }
 
-#[derive(Clone)]
+#[derive(Clone, Copy)]
 pub struct Color {
     pub r: u8,
     pub g: u8,
@@ -18,7 +18,7 @@ pub struct Color {
 }
 
 impl Color {
-    pub fn new(r: u8, g: u8, b: u8) -> Self {
+    pub const fn new(r: u8, g: u8, b: u8) -> Self {
         Self { r, g, b }
     }
 }
@@ -41,7 +41,7 @@ impl FrameBuffer {
     pub fn get(&self, x: usize, y: usize) -> Color {
         assert!(x < self.width);
         assert!(y < self.height);
-        self.buf[y * self.width + x].clone()
+        self.buf[y * self.width + x]
     }
 
     pub fn set(&mut self, x: usize, y: usize, color: Color) {
@@ -72,3 +72,11 @@ impl<T> Clone for Wire<T> {
         Self(clone_ref(&self.0))
     }
 }
+
+// pub struct BV<T>(pub T);
+
+// impl<T: std::ops::BitAnd<Output = T> + std::ops::Shl<Output = T> + From<u8> + Eq + Copy> BV<T> {
+//     pub fn get(&self, index: T) -> bool {
+//         self.0 & (T::from(1) << index) != T::from(0)
+//     }
+// }

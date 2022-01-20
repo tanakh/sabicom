@@ -1,13 +1,3 @@
-mod apu;
-mod consts;
-mod cpu;
-mod mapper;
-mod memory;
-mod nes;
-mod ppu;
-mod rom;
-mod util;
-
 use anyhow::{anyhow, Result};
 use sdl2::{
     audio::{AudioQueue, AudioSpecDesired},
@@ -18,6 +8,8 @@ use sdl2::{
     EventPump,
 };
 use std::{collections::VecDeque, path::PathBuf, time::Duration};
+
+use runes::{nes, rom};
 
 const SCALING: u32 = 2;
 const FPS: f64 = 60.0;

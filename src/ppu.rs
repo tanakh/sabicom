@@ -1,7 +1,8 @@
 use crate::{
     consts::*,
     mapper::Mapper,
-    util::{Ref, Wire},
+    palette::NES_PALETTE,
+    util::{FrameBuffer, Ref, Wire},
 };
 
 pub struct Ppu {
@@ -11,6 +12,7 @@ pub struct Ppu {
     counter: u64,
     mapper: Ref<dyn Mapper>,
     wires: Wires,
+    pub frame_buf: FrameBuffer,
 }
 
 pub struct Wires {
@@ -63,6 +65,7 @@ impl Ppu {
             line: 0,
             mapper,
             wires,
+            frame_buf: FrameBuffer::new(SCREEN_WIDTH, SCREEN_HEIGHT),
         }
     }
 
@@ -71,6 +74,25 @@ impl Ppu {
 
         if self.counter >= CLOCK_PER_LINE {
             self.counter -= CLOCK_PER_LINE;
+
+            if SCREEN_RANGE.contains(&self.line) {
+                self.render_line();
+
+                if self.reg.bg_visible || self.reg.sprite_visible {
+                    if (self.reg.cur_addr >> 12) & 7 == 7 {
+                        self.reg.cur_addr &= !0x7000;
+                        if ((self.reg.cur_addr >> 5) & 0x1f) == 29 {
+                            self.reg.cur_addr = (self.reg.cur_addr & !0x03e0) ^ 0x800;
+                        } else if (self.reg.cur_addr >> 5) & 0x1f == 0x1f {
+                            self.reg.cur_addr &= !0x03e0;
+                        } else {
+                            self.reg.cur_addr += 0x20;
+                        }
+                    } else {
+                        self.reg.cur_addr += 0x1000;
+                    }
+                }
+            }
 
             self.line += 1;
             if self.line >= TOTAL_LINES {
@@ -89,10 +111,85 @@ impl Ppu {
                 self.reg.vblank = false;
                 self.reg.sprite0_hit = false;
             }
+
+            if SCREEN_RANGE.contains(&self.line) && (self.reg.bg_visible || self.reg.sprite_visible)
+            {
+                self.reg.cur_addr = (self.reg.cur_addr & 0xfbe0) | (self.reg.tmp_addr & 0x041f);
+            }
         }
 
         let nmi_line = !(self.reg.vblank && self.reg.nmi_enable);
         self.wires.nmi.set(nmi_line);
+    }
+
+    pub fn render_line(&mut self) {
+        let y = self.line;
+
+        let pal0 = self.read_palette(0);
+        let mut buf = vec![pal0; SCREEN_WIDTH];
+
+        if self.reg.bg_visible {
+            self.render_bg(&mut buf);
+        }
+        if self.reg.sprite_visible {
+            self.render_spr(&mut buf);
+        }
+
+        for x in 0..SCREEN_WIDTH {
+            self.frame_buf
+                .set(x, y, NES_PALETTE[buf[x] as usize & 0x3f]);
+        }
+    }
+
+    pub fn render_bg(&mut self, buf: &mut [u8]) {
+        let x_ofs = self.reg.scroll_x as usize;
+        let y_ofs = (self.reg.cur_addr >> 12) & 7;
+        let pat_addr = if self.reg.bg_pat_addr { 0x1000 } else { 0x0000 };
+
+        let mut name_addr = self.reg.cur_addr & 0xfff;
+
+        for i in 0..33 {
+            let tile = self.read_nametable(name_addr);
+            let l = self.read_pattern(pat_addr + (tile as u16 * 16) + y_ofs);
+            let h = self.read_pattern(pat_addr + (tile as u16 * 16) + y_ofs + 8);
+
+            let tx = name_addr & 0x1f;
+            let ty = (name_addr >> 5) & 0x1f;
+            let attr_addr = (name_addr & 0xC00) + 0x3C0 + ((ty & !3) << 1) + (tx >> 2);
+            let aofs = (if (ty & 2) == 0 { 0 } else { 4 }) + (if (tx & 2) == 0 { 0 } else { 2 });
+            let attr = ((self.read_nametable(attr_addr) >> aofs) & 3) << 2;
+
+            for lx in 0..8 {
+                let x = (i * 8 + lx + 8 - x_ofs) as usize;
+                if !(x >= 8 && x < SCREEN_WIDTH + 8) {
+                    continue;
+                }
+                let b = (l >> (7 - lx)) & 1 | ((h >> (7 - lx)) & 1) << 1;
+                buf[x - 8] = 0x40 + self.read_palette(b | attr);
+            }
+
+            if (name_addr & 0x1f) == 0x1f {
+                name_addr = (name_addr & !0x1f) ^ 0x400;
+            } else {
+                name_addr += 1;
+            }
+        }
+    }
+
+    pub fn render_spr(&mut self, buf: &mut [u8]) {
+        todo!("render sprite");
+    }
+
+    fn read_nametable(&self, addr: u16) -> u8 {
+        self.mapper.borrow_mut().read_chr(0x2000 + addr)
+    }
+
+    fn read_pattern(&self, addr: u16) -> u8 {
+        self.mapper.borrow_mut().read_chr(addr)
+    }
+
+    fn read_palette(&self, index: u8) -> u8 {
+        self.mapper.borrow_mut().read_chr(0x3f00 + index as u16)
     }
 
     pub fn read_reg(&mut self, addr: u16) -> u8 {
