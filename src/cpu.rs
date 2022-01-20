@@ -181,8 +181,9 @@ impl Cpu {
 
         macro_rules! absi {
             () => {{
-                let t = self.fetch_u16();
-                self.read_u16(t)
+                let lo = self.fetch_u16();
+                let hi = (lo & 0xff00) | (lo as u8).wrapping_add(1) as u16;
+                self.read_u8(lo) as u16 | (self.read_u8(hi) as u16) << 8
             }};
         }
 
@@ -617,7 +618,7 @@ impl Cpu {
 
         self.push_u16(self.reg.pc);
         self.push_u8(self.reg.flag.get_u8(if brk { 3 } else { 2 }));
-        self.reg.pc = self.read_u16(vect);
+        self.reg.pc = self.read_u8(vect) as u16 | (self.read_u8(vect + 1) as u16) << 8;
         self.reg.flag.i = true;
     }
 
@@ -632,10 +633,6 @@ impl Cpu {
         self.counter += 1;
         self.mem.borrow_mut().write(addr, data);
         log::info!(target: "prgmem", "[${addr:04X}] <- ${data:02X}");
-    }
-
-    fn read_u16(&mut self, addr: u16) -> u16 {
-        self.read_u8(addr) as u16 | (self.read_u8(addr + 1) as u16) << 8
     }
 
     fn fetch_u8(&mut self) -> u8 {
@@ -724,7 +721,11 @@ impl Cpu {
                     "".to_string()
                 }
             }
-            AddrMode::IND => format!(" = {}", read_u8(opr)),
+            AddrMode::IND => format!(
+                " = {}{}",
+                read_u8((opr & 0xff00) | (opr as u8).wrapping_add(1) as u16),
+                read_u8(opr)
+            ),
             AddrMode::ZPX => {
                 let addr = (opr as u8).wrapping_add(self.reg.x);
                 format!(" @ {addr:02X} = {}", read_u8(addr as u16))
@@ -738,7 +739,7 @@ impl Cpu {
                 format!(" @ {addr:04X} = {}", read_u8(addr as u16))
             }
             AddrMode::ABY => {
-                let addr = opr.wrapping_add(self.reg.x as u16);
+                let addr = opr.wrapping_add(self.reg.y as u16);
                 format!(" @ {addr:04X} = {}", read_u8(addr as u16))
             }
             AddrMode::INX => {
