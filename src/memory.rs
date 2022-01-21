@@ -129,7 +129,7 @@ impl MemoryController {
     }
 
     pub fn read_chr(&self, addr: u16) -> u8 {
-        log::info!("Read CHR MEM: ${addr:04X}");
+        log::trace!("Read CHR MEM: ${addr:04X}");
 
         match addr {
             0x0000..=0x1fff => {
@@ -154,7 +154,7 @@ impl MemoryController {
     }
 
     pub fn write_chr(&mut self, addr: u16, data: u8) {
-        log::info!("Write CHR MEM: (${addr:04X}) = ${data:02X}");
+        log::trace!("Write CHR MEM: (${addr:04X}) = ${data:02X}");
 
         match addr {
             0x0000..=0x1fff => {
