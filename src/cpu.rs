@@ -216,11 +216,11 @@ macro_rules! instructions {
     ($cont:ident) => {
         $cont! {
             0x00: BRK IMM, 0x01: ORA INX, 0x02: UNK UNK, 0x03: UNK UNK,
-            0x04: UNK UNK, 0x05: ORA ZPG, 0x06: ASL ZPG, 0x07: UNK UNK,
+            0x04:*NOP ZPG, 0x05: ORA ZPG, 0x06: ASL ZPG, 0x07: UNK UNK,
             0x08: PHP IMP, 0x09: ORA IMM, 0x0A: ASL ACC, 0x0B: UNK UNK,
-            0x0C: UNK UNK, 0x0D: ORA ABS, 0x0E: ASL ABS, 0x0F: UNK UNK,
+            0x0C:*NOP ABS, 0x0D: ORA ABS, 0x0E: ASL ABS, 0x0F: UNK UNK,
             0x10: BPL REL, 0x11: ORA INY, 0x12: UNK UNK, 0x13: UNK UNK,
-            0x14: UNK UNK, 0x15: ORA ZPX, 0x16: ASL ZPX, 0x17: UNK UNK,
+            0x14:*NOP ZPX, 0x15: ORA ZPX, 0x16: ASL ZPX, 0x17: UNK UNK,
             0x18: CLC IMP, 0x19: ORA ABY, 0x1A: UNK UNK, 0x1B: UNK UNK,
             0x1C: UNK UNK, 0x1D: ORA ABX, 0x1E: ASL ABX, 0x1F: UNK UNK,
             0x20: JSR ABS, 0x21: AND INX, 0x22: UNK UNK, 0x23: UNK UNK,
@@ -228,23 +228,23 @@ macro_rules! instructions {
             0x28: PLP IMP, 0x29: AND IMM, 0x2A: ROL ACC, 0x2B: UNK UNK,
             0x2C: BIT ABS, 0x2D: AND ABS, 0x2E: ROL ABS, 0x2F: UNK UNK,
             0x30: BMI REL, 0x31: AND INY, 0x32: UNK UNK, 0x33: UNK UNK,
-            0x34: UNK UNK, 0x35: AND ZPX, 0x36: ROL ZPX, 0x37: UNK UNK,
+            0x34:*NOP ZPX, 0x35: AND ZPX, 0x36: ROL ZPX, 0x37: UNK UNK,
             0x38: SEC IMP, 0x39: AND ABY, 0x3A: UNK UNK, 0x3B: UNK UNK,
             0x3C: UNK UNK, 0x3D: AND ABX, 0x3E: ROL ABX, 0x3F: UNK UNK,
             0x40: RTI IMP, 0x41: EOR INX, 0x42: UNK UNK, 0x43: UNK UNK,
-            0x44: UNK UNK, 0x45: EOR ZPG, 0x46: LSR ZPG, 0x47: UNK UNK,
+            0x44:*NOP ZPG, 0x45: EOR ZPG, 0x46: LSR ZPG, 0x47: UNK UNK,
             0x48: PHA IMP, 0x49: EOR IMM, 0x4A: LSR ACC, 0x4B: UNK UNK,
             0x4C: JMP ABS, 0x4D: EOR ABS, 0x4E: LSR ABS, 0x4F: UNK UNK,
             0x50: BVC REL, 0x51: EOR INY, 0x52: UNK UNK, 0x53: UNK UNK,
-            0x54: UNK UNK, 0x55: EOR ZPX, 0x56: LSR ZPX, 0x57: UNK UNK,
+            0x54:*NOP ZPX, 0x55: EOR ZPX, 0x56: LSR ZPX, 0x57: UNK UNK,
             0x58: CLI IMP, 0x59: EOR ABY, 0x5A: UNK UNK, 0x5B: UNK UNK,
             0x5C: UNK UNK, 0x5D: EOR ABX, 0x5E: LSR ABX, 0x5F: UNK UNK,
             0x60: RTS IMP, 0x61: ADC INX, 0x62: UNK UNK, 0x63: UNK UNK,
-            0x64: UNK UNK, 0x65: ADC ZPG, 0x66: ROR ZPG, 0x67: UNK UNK,
+            0x64:*NOP ZPG, 0x65: ADC ZPG, 0x66: ROR ZPG, 0x67: UNK UNK,
             0x68: PLA IMP, 0x69: ADC IMM, 0x6A: ROR ACC, 0x6B: UNK UNK,
             0x6C: JMP IND, 0x6D: ADC ABS, 0x6E: ROR ABS, 0x6F: UNK UNK,
             0x70: BVS REL, 0x71: ADC INY, 0x72: UNK UNK, 0x73: UNK UNK,
-            0x74: UNK UNK, 0x75: ADC ZPX, 0x76: ROR ZPX, 0x77: UNK UNK,
+            0x74:*NOP ZPX, 0x75: ADC ZPX, 0x76: ROR ZPX, 0x77: UNK UNK,
             0x78: SEI IMP, 0x79: ADC ABY, 0x7A: UNK UNK, 0x7B: UNK UNK,
             0x7C: UNK UNK, 0x7D: ADC ABX, 0x7E: ROR ABX, 0x7F: UNK UNK,
             0x80: UNK UNK, 0x81: STA INX, 0x82: UNK UNK, 0x83: UNK UNK,
@@ -268,7 +268,7 @@ macro_rules! instructions {
             0xC8: INY IMP, 0xC9: CMP IMM, 0xCA: DEX IMP, 0xCB: UNK UNK,
             0xCC: CPY ABS, 0xCD: CMP ABS, 0xCE: DEC ABS, 0xCF: UNK UNK,
             0xD0: BNE REL, 0xD1: CMP INY, 0xD2: UNK UNK, 0xD3: UNK UNK,
-            0xD4: UNK UNK, 0xD5: CMP ZPX, 0xD6: DEC ZPX, 0xD7: UNK UNK,
+            0xD4:*NOP ZPX, 0xD5: CMP ZPX, 0xD6: DEC ZPX, 0xD7: UNK UNK,
             0xD8: CLD IMP, 0xD9: CMP ABY, 0xDA: UNK UNK, 0xDB: UNK UNK,
             0xDC: UNK UNK, 0xDD: CMP ABX, 0xDE: DEC ABX, 0xDF: UNK UNK,
             0xE0: CPX IMM, 0xE1: SBC INX, 0xE2: UNK UNK, 0xE3: UNK UNK,
@@ -276,7 +276,7 @@ macro_rules! instructions {
             0xE8: INX IMP, 0xE9: SBC IMM, 0xEA: NOP IMP, 0xEB: UNK UNK,
             0xEC: CPX ABS, 0xED: SBC ABS, 0xEE: INC ABS, 0xEF: UNK UNK,
             0xF0: BEQ REL, 0xF1: SBC INY, 0xF2: UNK UNK, 0xF3: UNK UNK,
-            0xF4: UNK UNK, 0xF5: SBC ZPX, 0xF6: INC ZPX, 0xF7: UNK UNK,
+            0xF4:*NOP ZPX, 0xF5: SBC ZPX, 0xF6: INC ZPX, 0xF7: UNK UNK,
             0xF8: SED IMP, 0xF9: SBC ABY, 0xFA: UNK UNK, 0xFB: UNK UNK,
             0xFC: UNK UNK, 0xFD: SBC ABX, 0xFE: INC ABX, 0xFF: UNK UNK,
         }
@@ -316,25 +316,37 @@ impl Cpu {
 
         let opc = self.fetch_u8();
 
+        // macro_rules! gen_code {
+        //     ($($opc:literal: $mne:expr, $mode:ident, )*) => {
+        //         match opc {
+        //             $(
+        //                 // $opc => exec!($mne, $mode),
+        //             )*
+        //         }
+        //     };
+        // }
+
         macro_rules! gen_code {
-            ($($opc:literal: $mne:ident $mode:ident, )*) => {
+            ($($opc:literal: $a:tt $b:ident $($c:ident)?, )*) => {{
                 match opc {
-                    $(
-                        $opc => exec!($mne, $mode),
-                    )*
+                    $( $opc => exec!($a $b $($c)*), )*
                 }
-            };
+            }};
         }
 
         macro_rules! exec {
-            ($mne:ident, IMP) => {
+            (*$mne:ident $mode:ident) => {
+                exec!($mne $mode)
+            };
+            ($mne:ident IMP) => {
                 exec_op!($mne)
             };
-            ($mne:ident, ACC) => {
+            ($mne:ident ACC) => {
                 exec_op!($mne, ACC)
             };
 
-            ($mne:ident, $mode:ident) => {{
+            ($mne:ident $mode:ident) => {{
+                #[allow(unused_variables)]
                 let addr = effaddr!($mode);
                 exec_op!($mne, addr)
             }};
@@ -668,7 +680,7 @@ impl Cpu {
                 self.exec_interrupt(Interrupt::Irq, true);
             }};
 
-            (NOP) => {{}};
+            (NOP $(, $_:ident)?) => {{}};
 
             (UNK, $addr:ident) => {{
                 log::warn!("invalid opcode: ${opc:02X}");
@@ -773,7 +785,7 @@ impl Cpu {
         let asm = format!("{}{}", asm, ctx);
 
         log::trace!(target: "disasm-nestest",
-            "{pc:04X}  {bytes:8}  {asm:30}  A:{a:02X} X:{x:02X} Y:{y:02X} P:{p:02X} SP:{s:02X}",
+            "{pc:04X}  {bytes:8} {asm:32} A:{a:02X} X:{x:02X} Y:{y:02X} P:{p:02X} SP:{s:02X}",
             pc = self.reg.pc,
             a = self.reg.a,
             x = self.reg.x,
@@ -785,36 +797,46 @@ impl Cpu {
 }
 
 macro_rules! instr_table {
-    ($($opc:literal: $mne:ident $addr_mode:ident,)*) => {{
+    ($($opc:literal: $a:tt $b:ident $($c:ident)?, )*) => {{
         [$(
-            (stringify!($mne), AddrMode::$addr_mode),
+            instr_entry!($a $b $($c)*),
         )*]
-    }}
+    }};
 }
 
-const INSTR_TABLE: [(&str, AddrMode); 256] = instructions!(instr_table);
+macro_rules! instr_entry {
+    (*$mne:ident $mode:ident) => {{
+        (stringify!($mne), AddrMode::$mode, false)
+    }};
+    ($mne:ident $mode:ident) => {{
+        (stringify!($mne), AddrMode::$mode, true)
+    }};
+}
+
+const INSTR_TABLE: [(&str, AddrMode, bool); 256] = instructions!(instr_table);
 
 fn disasm(pc: u16, opc: u8, opr: u16) -> String {
     let opc = opc as usize;
-    let (mne, addr_mode) = &INSTR_TABLE[opc];
+    let (mne, addr_mode, official) = &INSTR_TABLE[opc];
+    let u = if *official { ' ' } else { '*' };
 
     match addr_mode {
-        AddrMode::IMP => mne.to_string(),
-        AddrMode::IMM => format!("{mne} #${:02X}", opr & 0xff),
-        AddrMode::ACC => format!("{mne} A"),
-        AddrMode::ABS => format!("{mne} ${opr:04X}"),
-        AddrMode::ABX => format!("{mne} ${opr:04X},X"),
-        AddrMode::ABY => format!("{mne} ${opr:04X},Y"),
-        AddrMode::IND => format!("{mne} (${opr:04X})"),
-        AddrMode::ZPG => format!("{mne} ${:02X}", opr & 0xff),
-        AddrMode::ZPX => format!("{mne} ${:02X},X", opr & 0xff),
-        AddrMode::ZPY => format!("{mne} ${:02X},Y", opr & 0xff),
-        AddrMode::INX => format!("{mne} (${:02X},X)", opr & 0xff),
-        AddrMode::INY => format!("{mne} (${:02X}),Y", opr & 0xff),
+        AddrMode::IMP => format!("{u}{mne}"),
+        AddrMode::IMM => format!("{u}{mne} #${:02X}", opr & 0xff),
+        AddrMode::ACC => format!("{u}{mne} A"),
+        AddrMode::ABS => format!("{u}{mne} ${opr:04X}"),
+        AddrMode::ABX => format!("{u}{mne} ${opr:04X},X"),
+        AddrMode::ABY => format!("{u}{mne} ${opr:04X},Y"),
+        AddrMode::IND => format!("{u}{mne} (${opr:04X})"),
+        AddrMode::ZPG => format!("{u}{mne} ${:02X}", opr & 0xff),
+        AddrMode::ZPX => format!("{u}{mne} ${:02X},X", opr & 0xff),
+        AddrMode::ZPY => format!("{u}{mne} ${:02X},Y", opr & 0xff),
+        AddrMode::INX => format!("{u}{mne} (${:02X},X)", opr & 0xff),
+        AddrMode::INY => format!("{u}{mne} (${:02X}),Y", opr & 0xff),
         AddrMode::REL => {
             let addr = pc.wrapping_add((opr & 0xff) as i8 as u16).wrapping_add(2);
-            format!("{mne} ${:04X}", addr)
+            format!("{u}{mne} ${:04X}", addr)
         }
-        AddrMode::UNK => format!("{mne} ???"),
+        AddrMode::UNK => format!("{u}{mne} ???"),
     }
 }

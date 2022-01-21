@@ -177,7 +177,7 @@ impl Ppu {
     }
 
     pub fn render_spr(&mut self, buf: &mut [u8]) {
-        todo!("render sprite");
+        log::warn!("render sprite");
     }
 
     fn read_nametable(&self, addr: u16) -> u8 {
