@@ -9,7 +9,10 @@ use sdl2::{
 };
 use std::{collections::VecDeque, path::PathBuf, time::Duration};
 
-use runes::{nes, rom};
+use sabicom::{
+    nes, rom,
+    util::{Input, Pad},
+};
 
 const SCALING: u32 = 2;
 const FPS: f64 = 60.0;
@@ -37,7 +40,7 @@ fn main(file: PathBuf) -> Result<()> {
     let video_subsystem = sdl_context.video().map_err(|e| anyhow!("{e}"))?;
 
     let window = video_subsystem
-        .window("runes", screen_width, screen_height)
+        .window("sabicom", screen_width, screen_height)
         .build()?;
 
     let mut canvas = window.into_canvas().build()?;
@@ -71,7 +74,9 @@ fn main(file: PathBuf) -> Result<()> {
     let mut timer = Timer::new();
 
     while process_events(&mut event_pump) {
-        nes.exec_frame();
+        let input = get_input(&event_pump);
+
+        nes.exec_frame(&input);
 
         surface.with_lock_mut(|r| {
             let buf = nes.get_frame_buf();
@@ -132,6 +137,29 @@ fn process_events(event_pump: &mut EventPump) -> bool {
         }
     }
     true
+}
+
+fn get_input(e: &EventPump) -> Input {
+    use sdl2::keyboard::{KeyboardState, Scancode};
+
+    let kbstate = KeyboardState::new(e);
+
+    let pad1 = Pad {
+        up: kbstate.is_scancode_pressed(Scancode::Up),
+        down: kbstate.is_scancode_pressed(Scancode::Down),
+        left: kbstate.is_scancode_pressed(Scancode::Left),
+        right: kbstate.is_scancode_pressed(Scancode::Right),
+        a: kbstate.is_scancode_pressed(Scancode::Z),
+        b: kbstate.is_scancode_pressed(Scancode::X),
+        start: kbstate.is_scancode_pressed(Scancode::Return),
+        select: kbstate.is_scancode_pressed(Scancode::RShift),
+    };
+
+    let pad2 = Pad::default();
+
+    let pad = [pad1, pad2];
+
+    Input { pad }
 }
 
 use std::time::SystemTime;

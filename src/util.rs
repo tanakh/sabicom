@@ -51,6 +51,23 @@ impl FrameBuffer {
     }
 }
 
+#[derive(Default, Clone, Debug)]
+pub struct Input {
+    pub pad: [Pad; 2],
+}
+
+#[derive(Default, Clone, Debug)]
+pub struct Pad {
+    pub up: bool,
+    pub down: bool,
+    pub left: bool,
+    pub right: bool,
+    pub a: bool,
+    pub b: bool,
+    pub start: bool,
+    pub select: bool,
+}
+
 pub struct Wire<T>(Ref<T>);
 
 impl<T: Clone> Wire<T> {

@@ -6,7 +6,7 @@ use crate::{
     memory::MemoryMap,
     ppu::{self, Ppu},
     rom::Rom,
-    util::{clone_ref, wrap_ref, FrameBuffer, Ref, Wire},
+    util::{clone_ref, wrap_ref, FrameBuffer, Input, Ref, Wire},
 };
 
 pub struct Nes {
@@ -63,7 +63,9 @@ impl Nes {
         todo!("reset")
     }
 
-    pub fn exec_frame(&mut self) {
+    pub fn exec_frame(&mut self, input: &Input) {
+        self.apu.borrow_mut().set_input(input);
+
         for _ in 0..CLOCK_PER_FRAME {
             self.cpu.tick();
             self.ppu.borrow_mut().tick();
