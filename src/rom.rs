@@ -241,6 +241,15 @@ impl Rom {
         let to_si = |x| ByteSize(x as _).to_string_as(true);
         let yn = |b| if b { "Yes" } else { "No" };
 
+        let prg_chr_crc32 = {
+            let mut hasher = crc32fast::Hasher::new();
+            hasher.update(&self.prg_rom);
+            hasher.update(&self.chr_rom);
+            hasher.finalize()
+        };
+        let prg_rom_crc32 = crc32fast::hash(&self.prg_rom);
+        let chr_rom_crc32 = crc32fast::hash(&self.chr_rom);
+
         let mut table = table! {
             [ "ROM Format",
                 match self.format {
@@ -259,7 +268,10 @@ impl Rom {
             [ "PRG RAM Size", to_si(self.prg_ram_size) ],
             [ "PRG NVRAM Size", to_si(self.prg_nvram_size) ],
             [ "CHR RAM Size", to_si(self.chr_ram_size) ],
-            [ "CHR NVRAM Size", to_si(self.chr_nvram_size) ]
+            [ "CHR NVRAM Size", to_si(self.chr_nvram_size) ],
+            [ "PRG+CHR CRC32", format!("{prg_chr_crc32:08X}") ],
+            [ "PRG ROM CRC32", format!("{prg_rom_crc32:08X}") ],
+            [ "CHR ROM CRC32", format!("{chr_rom_crc32:08X}") ]
         };
 
         table.set_titles(row!["ROM File Info"]);
