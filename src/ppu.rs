@@ -21,6 +21,9 @@ pub struct Wires {
 
 #[derive(Default)]
 struct Register {
+    buf: u8,
+    vram_read_buf: u8,
+
     nmi_enable: bool,
     ppu_master: bool,
     sprite_size: bool,
@@ -224,6 +227,9 @@ impl Ppu {
             let mut x = sx;
             while x != ex {
                 let pos = spr_x as usize + x as usize;
+                if pos >= SCREEN_WIDTH {
+                    break;
+                }
 
                 let lower = (l & 1) | ((u & 1) << 1);
                 if lower != 0 && buf[pos] & 0x80 == 0 {
@@ -254,10 +260,10 @@ impl Ppu {
     }
 
     pub fn read_reg(&mut self, addr: u16) -> u8 {
-        match addr {
+        let ret = match addr {
             2 => {
                 // Status
-                let mut ret = 0;
+                let mut ret = self.reg.buf & 0x1f;
                 ret |= if self.reg.vblank { 0x80 } else { 0 };
                 ret |= if self.reg.sprite0_hit { 0x40 } else { 0 };
                 ret |= if self.reg.sprite_over { 0x20 } else { 0 };
@@ -266,7 +272,21 @@ impl Ppu {
                 self.reg.vblank = false;
                 self.reg.toggle = false;
 
-                log::info!(target: "ppureg", "[PPUSTATUS] -> ${:02X}", ret);
+                log::info!(target: "ppureg", "[PPUSTATUS] -> ${ret:02X}");
+
+                ret
+            }
+
+            4 => {
+                // OAM Data
+                let ret = self.oam[self.reg.oam_addr as usize];
+                let ret = if self.reg.oam_addr & 3 == 2 {
+                    ret & 0xe3
+                } else {
+                    ret
+                };
+
+                log::info!(target: "ppureg", "[OAMDATA] -> ${ret:02X}",);
 
                 ret
             }
@@ -275,7 +295,14 @@ impl Ppu {
                 // Data
                 let addr = self.reg.cur_addr & 0x3fff;
 
-                let ret = self.mapper.borrow_mut().read_chr(addr);
+                let ret = if addr & 0x3f00 == 0x3f00 {
+                    self.reg.vram_read_buf = self.mapper.borrow_mut().read_chr(addr & !0x1000);
+                    self.mapper.borrow_mut().read_chr(addr)
+                } else {
+                    let ret = self.reg.vram_read_buf;
+                    self.reg.vram_read_buf = self.mapper.borrow_mut().read_chr(addr);
+                    ret
+                };
 
                 let inc_addr = if self.reg.ppu_addr_incr { 32 } else { 1 };
                 self.reg.cur_addr = self.reg.cur_addr.wrapping_add(inc_addr);
@@ -287,12 +314,17 @@ impl Ppu {
 
             _ => {
                 log::info!("Read from invalid PPU register: [{addr}]");
-                0
+                self.reg.buf
             }
-        }
+        };
+
+        self.reg.buf = ret;
+        ret
     }
 
     pub fn write_reg(&mut self, addr: u16, data: u8) {
+        self.reg.buf = data;
+
         match addr {
             0 => {
                 // Controller

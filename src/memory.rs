@@ -30,8 +30,22 @@ impl MemoryMap {
         match addr {
             0x0000..=0x1fff => self.ram[(addr & 0x7ff) as usize] = data,
             0x2000..=0x3fff => self.ppu.borrow_mut().write_reg(addr & 7, data),
-            0x4000..=0x4017 => self.apu.borrow_mut().write_reg(addr, data),
+            0x4000..=0x4013 | 0x4015..=0x4017 => self.apu.borrow_mut().write_reg(addr, data),
             0x4018..=0xffff => self.mapper.borrow_mut().write_prg(addr, data),
+
+            0x4014 => {
+                // OAM DMA
+                log::warn!("OAM DMA = ${data:02X}");
+
+                let hi = (data as u16) << 8;
+
+                for lo in 0..0x100 {
+                    let b = self.read(hi | lo);
+                    self.write(0x2004, b);
+                }
+
+                // TODO: suspend cpu for 513 cycles
+            }
         }
     }
 }
@@ -42,8 +56,8 @@ pub struct MemoryController {
     prg_ram: Vec<u8>,
     chr_ram: Vec<u8>,
 
-    nametable: Vec<u8>,
-    palette: Vec<u8>,
+    nametable: [u8; 2 * 1024],
+    palette: [u8; 0x20],
 
     rom_page: [usize; 4],
     chr_page: [usize; 8],
@@ -57,8 +71,15 @@ impl MemoryController {
         let prg_ram = vec![0x00; rom.borrow().prg_ram_size];
         let chr_ram = vec![0x00; rom.borrow().chr_ram_size];
 
-        let nametable = vec![0x00; 2 * 1024];
-        let palette = vec![0x00; 0x20];
+        let nametable = [0x00; 2 * 1024];
+
+        #[rustfmt::skip]
+        let palette = [
+            0x09, 0x01, 0x00, 0x01, 0x00, 0x02, 0x02, 0x0D,
+            0x08, 0x10, 0x08, 0x24, 0x00, 0x00, 0x04, 0x2C,
+            0x09, 0x01, 0x34, 0x03, 0x00, 0x04, 0x00, 0x14,
+            0x08, 0x3A, 0x00, 0x02, 0x00, 0x20, 0x2C, 0x08,
+        ];
 
         let mut ret = Self {
             rom,
@@ -148,7 +169,10 @@ impl MemoryController {
                 let ix = self.nametable_page[page] + ofs;
                 self.nametable[ix]
             }
-            0x3f00..=0x3fff => self.palette[(addr & 0x1f) as usize],
+            0x3f00..=0x3fff => {
+                let addr = addr & if addr & 3 == 0 { 0x0f } else { 0x1f };
+                self.palette[addr as usize]
+            }
             _ => unreachable!(),
         }
     }
@@ -174,7 +198,8 @@ impl MemoryController {
                 self.nametable[ix] = data;
             }
             0x3f00..=0x3fff => {
-                self.palette[(addr & 0x1f) as usize] = data;
+                let addr = addr & if addr & 3 == 0 { 0x0f } else { 0x1f };
+                self.palette[addr as usize] = data;
             }
             _ => unreachable!(),
         }
