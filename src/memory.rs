@@ -108,6 +108,10 @@ impl MemoryController {
         self.rom_page[page] = (bank * 0x2000) % self.rom.borrow().prg_rom.len();
     }
 
+    pub fn prg_pages(&mut self) -> usize {
+        self.rom.borrow().prg_rom.len() / 0x2000
+    }
+
     /// Maps a CHR ROM page to a given 1KB bank
     pub fn map_chr(&mut self, page: usize, bank: usize) {
         if !self.rom.borrow().chr_rom.is_empty() {
@@ -115,6 +119,10 @@ impl MemoryController {
         } else {
             self.chr_page[page] = (bank * 0x0400) % self.rom.borrow().chr_ram_size;
         }
+    }
+
+    pub fn chr_pages(&mut self) -> usize {
+        self.rom.borrow().chr_rom.len() / 0x0400
     }
 
     pub fn set_mirroring(&mut self, page: usize, bank: usize) {
