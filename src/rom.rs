@@ -276,6 +276,6 @@ impl Rom {
 
         table.set_titles(row!["ROM File Info"]);
         table.set_format(*format::consts::FORMAT_NO_LINESEP_WITH_TITLE);
-        log::info!("{}", table);
+        log::info!("\n{}", table);
     }
 }

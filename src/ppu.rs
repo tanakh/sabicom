@@ -177,7 +177,68 @@ impl Ppu {
     }
 
     pub fn render_spr(&mut self, buf: &mut [u8]) {
-        log::warn!("render sprite");
+        let spr_height = if self.reg.sprite_size { 16 } else { 8 };
+        let pat_addr = if self.reg.sprite_pat_addr { 0x1000 } else { 0 };
+
+        for i in 0..64 {
+            let r = &self.oam[i * 4..(i + 1) * 4];
+
+            let spr_y = r[0] as usize + 1;
+            let attr = r[2];
+
+            if !(spr_y..spr_y + spr_height).contains(&self.line) {
+                continue;
+            }
+
+            let tile_index = r[1] as u16;
+            let spr_x = r[3];
+            let is_bg = attr & 0x20 != 0;
+            let upper = (attr & 3) << 2;
+
+            log::trace!("sprite {i}, x = {spr_x}, y = {spr_y}");
+
+            let h_flip = attr & 0x40 == 0;
+            let sx = if h_flip { 7 } else { 0 };
+            let ex = if h_flip { -1 } else { 8 };
+            let ix = if h_flip { -1 } else { 1 };
+
+            let v_flip = attr & 0x80 != 0;
+
+            let mut y_ofs = self.line - spr_y;
+            if v_flip {
+                y_ofs = spr_height - 1 - y_ofs;
+            }
+
+            let tile_addr = if spr_height == 16 {
+                (tile_index & !1) * 16
+                    + ((tile_index & 1) * 0x1000)
+                    + if y_ofs >= 8 { 16 } else { 0 }
+                    + (y_ofs as u16 & 7)
+            } else {
+                pat_addr + tile_index * 16 + y_ofs as u16
+            };
+
+            let mut l = self.read_pattern(tile_addr);
+            let mut u = self.read_pattern(tile_addr + 8);
+
+            let mut x = sx;
+            while x != ex {
+                let pos = spr_x as usize + x as usize;
+
+                let lower = (l & 1) | ((u & 1) << 1);
+                if lower != 0 && buf[pos] & 0x80 == 0 {
+                    if !is_bg || buf[pos] & 0x40 == 0 {
+                        buf[pos] = self.read_palette(0x10 | upper | lower);
+                    }
+                    buf[pos] |= 0x80;
+                }
+
+                l >>= 1;
+                u >>= 1;
+
+                x += ix;
+            }
+        }
     }
 
     fn read_nametable(&self, addr: u16) -> u8 {
@@ -236,8 +297,8 @@ impl Ppu {
             0 => {
                 // Controller
                 log::info!(
-                    target: "ppureg",
-                    "[PPUCTRL] = b{data:08b}: nmi={nmi}, ppu={ppu}, spr={sprite_size}, bgpat=${bg_pat_addr:04X}, sprpat=${sprite_pat_addr:04X}, addrinc={ppu_addr_incr}, nt_addr=${base_nametable_addr:04X}",
+                    target: "ppureg::PPUCTRL",
+                    "= b{data:08b}: nmi={nmi}, ppu={ppu}, spr={sprite_size}, bgpat=${bg_pat_addr:04X}, sprpat=${sprite_pat_addr:04X}, addrinc={ppu_addr_incr}, nt_addr=${base_nametable_addr:04X}",
                     nmi = if data & 0x80 != 0 { "t" } else { "f" },
                     ppu = if data & 0x40 != 0 { "t" } else { "f" },
                     sprite_size = if data & 0x20 != 0 { "8x16" } else { "8x8" },
@@ -259,7 +320,7 @@ impl Ppu {
 
             1 => {
                 // Mask
-                log::info!(target: "ppureg", "[PPUMASK] = b{data:08b}: bgcol={r}{g}{b}, spr_vis={sprite_visible}, bg_vis={bg_visible}, spr_clip={sprite_clip}, bg_clip={bg_clip}, greyscale={greyscale}",
+                log::info!(target: "ppureg::PPUMASK", "= b{data:08b}: bgcol={r}{g}{b}, spr_vis={sprite_visible}, bg_vis={bg_visible}, spr_clip={sprite_clip}, bg_clip={bg_clip}, greyscale={greyscale}",
                     r = if data & 0x20 != 0 { "R" } else { "-" },
                     g = if data & 0x40 != 0 { "G" } else { "-" },
                     b = if data & 0x80 != 0 { "B" } else { "-" },
@@ -283,13 +344,13 @@ impl Ppu {
             }
             3 => {
                 // OAM address
-                log::info!(target: "ppureg", "[OAMADDR] <- ${data:02X}");
+                log::info!(target: "ppureg::OAMADDR", "= ${data:02X}");
 
                 self.reg.oam_addr = data;
             }
             4 => {
                 // OAM data
-                log::info!(target: "ppureg", "[OAMDATA] <- ${data:02X}: OAM[${oam_addr:02X}] = ${data:02X}",
+                log::info!(target: "ppureg::OAMDATA", "= ${data:02X}: OAM[${oam_addr:02X}] = ${data:02X}",
                     oam_addr = self.reg.oam_addr);
 
                 self.oam[self.reg.oam_addr as usize] = data;
@@ -297,7 +358,7 @@ impl Ppu {
             }
             5 => {
                 // Scroll
-                log::info!(target: "ppureg", "[PPUSCROLL] <- ${data:02X}");
+                log::info!(target: "ppureg::PPUSCROLL", "= ${data:02X}");
 
                 if !self.reg.toggle {
                     self.reg.tmp_addr = (self.reg.tmp_addr & 0x7fe0) | (data as u16 >> 3);
@@ -311,7 +372,7 @@ impl Ppu {
             }
             6 => {
                 // Address
-                log::info!(target: "ppureg", "[PPUADDR] <- ${data:02X}");
+                log::info!(target: "ppureg::PPUADDR", "= ${data:02X}");
 
                 if !self.reg.toggle {
                     self.reg.tmp_addr = (self.reg.tmp_addr & 0x00ff) | ((data as u16 & 0x3f) << 8);
@@ -325,7 +386,7 @@ impl Ppu {
                 // Data
                 let addr = self.reg.cur_addr & 0x3fff;
 
-                log::info!(target: "ppureg", "[PPUDATA] <- ${data:02X}, CHR[${addr:04X}] <- ${data:02X}");
+                log::info!(target: "ppureg::PPUDATA", "= ${data:02X}, CHR[${addr:04X}] <- ${data:02X}");
 
                 self.mapper.borrow_mut().write_chr(addr, data);
 
