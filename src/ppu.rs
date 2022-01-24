@@ -132,7 +132,7 @@ impl Ppu {
     }
 
     pub fn render_line(&mut self) {
-        let mut buf = [self.read_palette(0); SCREEN_WIDTH];
+        let mut buf = [self.read_palette(0) & 0x3f; SCREEN_WIDTH];
 
         if self.reg.bg_visible {
             self.render_bg(&mut buf);
@@ -171,7 +171,9 @@ impl Ppu {
                     continue;
                 }
                 let b = (l >> (7 - lx)) & 1 | ((h >> (7 - lx)) & 1) << 1;
-                buf[x - 8] = 0x40 + self.read_palette(b | attr);
+                if b != 0 {
+                    buf[x - 8] = 0x40 + self.read_palette(b | attr);
+                }
             }
 
             if (name_addr & 0x1f) == 0x1f {
@@ -240,6 +242,9 @@ impl Ppu {
                         buf[pos] = self.read_palette(0x10 | upper | lower);
                     }
                     buf[pos] |= 0x80;
+                    if i == 0 {
+                        self.reg.sprite0_hit = true;
+                    }
                 }
 
                 l >>= 1;
