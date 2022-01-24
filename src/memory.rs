@@ -1,4 +1,10 @@
-use crate::{apu::Apu, mapper::Mapper, ppu::Ppu, rom::Rom, util::Ref};
+use crate::{
+    apu::Apu,
+    mapper::Mapper,
+    ppu::Ppu,
+    rom::{Mirroring, Rom},
+    util::Ref,
+};
 
 pub struct MemoryMap {
     ram: Vec<u8>,
@@ -35,8 +41,6 @@ impl MemoryMap {
 
             0x4014 => {
                 // OAM DMA
-                log::warn!("OAM DMA = ${data:02X}");
-
                 let hi = (data as u16) << 8;
 
                 for lo in 0..0x100 {
@@ -67,6 +71,8 @@ pub struct MemoryController {
 impl MemoryController {
     pub fn new(rom: Ref<Rom>) -> Self {
         assert!(!(rom.borrow().chr_ram_size > 0 && !rom.borrow().chr_rom.is_empty()));
+
+        let mirroring = rom.borrow().mirroring;
 
         let prg_ram = vec![0x00; rom.borrow().prg_ram_size];
         let chr_ram = vec![0x00; rom.borrow().chr_ram_size];
@@ -100,6 +106,8 @@ impl MemoryController {
             ret.map_chr(i, i);
         }
 
+        ret.set_mirroring(mirroring);
+
         ret
     }
 
@@ -125,8 +133,28 @@ impl MemoryController {
         self.rom.borrow().chr_rom.len() / 0x0400
     }
 
-    pub fn set_mirroring(&mut self, page: usize, bank: usize) {
-        todo!()
+    pub fn map_nametable(&mut self, page: usize, bank: usize) {
+        self.nametable_page[page] = bank * 0x0400;
+    }
+
+    pub fn set_mirroring(&mut self, mirroring: Mirroring) {
+        match mirroring {
+            Mirroring::Horizontal => {
+                self.map_nametable(0, 0);
+                self.map_nametable(1, 0);
+                self.map_nametable(2, 1);
+                self.map_nametable(3, 1);
+            }
+            Mirroring::Vertical => {
+                self.map_nametable(0, 0);
+                self.map_nametable(1, 1);
+                self.map_nametable(2, 0);
+                self.map_nametable(3, 1);
+            }
+            Mirroring::FourScreen => {
+                todo!()
+            }
+        }
     }
 
     pub fn read_prg(&self, addr: u16) -> u8 {
