@@ -1,4 +1,5 @@
 use crate::{
+    consts::{PPU_CLOCK_PER_FRAME, PPU_CLOCK_PER_LINE},
     memory::MemoryMap,
     util::{Ref, Wire},
 };
@@ -8,15 +9,16 @@ const RST_VECTOR: u16 = 0xFFFC;
 const IRQ_VECTOR: u16 = 0xFFFE;
 
 pub struct Cpu {
-    nmi_prev: bool,
-
     world: u64,
     counter: u64,
 
-    reg: Register,
+    pub reg: Register,
 
     mem: Ref<MemoryMap>,
     wires: Wires,
+
+    nmi_prev: bool,
+    i_flag_prev: bool,
 }
 
 pub struct Wires {
@@ -32,12 +34,12 @@ pub enum Interrupt {
     Nmi,
 }
 
-struct Register {
+pub struct Register {
     a: u8,
     x: u8,
     y: u8,
     s: u8,
-    pc: u16,
+    pub pc: u16,
     flag: Flag,
 }
 
@@ -106,11 +108,12 @@ impl Cpu {
     pub fn new(mem: Ref<MemoryMap>, wires: Wires) -> Self {
         let mut ret = Self {
             mem,
-            counter: 0,
+            counter: 2,
             world: 0,
             reg: Register::new(),
             wires,
             nmi_prev: false,
+            i_flag_prev: false,
         };
         ret.exec_interrupt(Interrupt::Rst, false);
         ret
@@ -287,22 +290,20 @@ impl Cpu {
             let nmi_prev = self.nmi_prev;
             self.nmi_prev = nmi_cur;
 
+            let irq_prev = self.wires.irq.get();
+            self.i_flag_prev = self.reg.flag.i;
+
+            self.exec_one();
+
             if nmi_prev && !nmi_cur {
                 self.exec_interrupt(Interrupt::Nmi, false);
                 continue;
             }
 
-            if self.wires.irq.get() {
-                self.exec_interrupt(Interrupt::Rst, false);
-                continue;
-            }
-
-            if self.wires.rst.get() {
+            if !self.i_flag_prev && irq_prev {
                 self.exec_interrupt(Interrupt::Irq, false);
                 continue;
             }
-
-            self.exec_one();
         }
     }
 
@@ -319,70 +320,121 @@ impl Cpu {
             }};
         }
 
+        macro_rules! is_read {
+            (STA) => {
+                false
+            };
+            (LSR) => {
+                false
+            };
+            (ASL) => {
+                false
+            };
+            (ROR) => {
+                false
+            };
+            (ROL) => {
+                false
+            };
+            (INC) => {
+                false
+            };
+            (DEC) => {
+                false
+            };
+            ($mne:ident) => {
+                true
+            };
+        }
+
         macro_rules! exec {
             (*$mne:ident $mode:ident) => {
                 exec!($mne $mode)
             };
-            ($mne:ident IMP) => {
+            ($mne:ident IMP) => {{
+                let _ = self.read_u8(self.reg.pc);
                 exec_op!($mne)
-            };
-            ($mne:ident ACC) => {
+            }};
+            ($mne:ident ACC) => {{
+                let _ = self.read_u8(self.reg.pc);
                 exec_op!($mne, ACC)
-            };
+            }};
+
 
             ($mne:ident $mode:ident) => {{
                 #[allow(unused_variables)]
-                let addr = effaddr!($mode);
+                let read = is_read!($mne);
+                #[allow(unused_variables)]
+                let addr = effaddr!($mode, read);
                 exec_op!($mne, addr)
             }};
         }
 
         macro_rules! effaddr {
-            (IMM) => {{
+            (IMM, $read:ident) => {{
                 let ret = self.reg.pc;
                 self.reg.pc = self.reg.pc.wrapping_add(1);
                 ret
             }};
-            (ABS) => {{
+            (ABS, $read:ident) => {{
                 self.fetch_u16()
             }};
-            (ABX) => {{
-                self.fetch_u16().wrapping_add(self.reg.x as u16)
+            (ABX, $read:ident) => {
+                effaddr!(abs_ix, x, $read)
+            };
+            (ABY, $read:ident) => {
+                effaddr!(abs_ix, y, $read)
+            };
+            (abs_ix, $reg:ident, $read:ident) => {{
+                let addr = self.fetch_u16();
+                let tmp = (addr & 0xff) + self.reg.$reg as u16;
+                if !$read || tmp >= 0x100 {
+                    let _ = self.read_u8(addr & 0xff00 | tmp & 0xff);
+                }
+                addr.wrapping_add(self.reg.$reg as u16)
             }};
-            (ABY) => {{
-                self.fetch_u16().wrapping_add(self.reg.y as u16)
-            }};
-            (IND) => {{
+            (IND, $read:ident) => {{
                 let lo = self.fetch_u16();
                 let hi = (lo & 0xff00) | (lo as u8).wrapping_add(1) as u16;
                 self.read_u8(lo) as u16 | (self.read_u8(hi) as u16) << 8
             }};
-            (ZPG) => {{
+            (ZPG, $read:ident) => {{
                 self.fetch_u8() as u16
             }};
-            (ZPX) => {{
-                self.fetch_u8().wrapping_add(self.reg.x) as u16
+            (ZPX, $read:ident) => {{
+                let addr = self.fetch_u8();
+                self.read_u8(addr as u16);
+                addr.wrapping_add(self.reg.x) as u16
             }};
-            (ZPY) => {{
-                self.fetch_u8().wrapping_add(self.reg.y) as u16
+            (ZPY, $read:ident) => {{
+                let addr = self.fetch_u8();
+                self.read_u8(addr as u16);
+                addr.wrapping_add(self.reg.y) as u16
             }};
-            (INX) => {{
-                let a = self.fetch_u8().wrapping_add(self.reg.x);
+            (INX, $read:ident) => {{
+                let a = self.fetch_u8();
+                let _ = self.read_u8(a as u16);
+                let a = a.wrapping_add(self.reg.x);
                 let lo = self.read_u8(a as u16);
                 let hi = self.read_u8(a.wrapping_add(1) as u16);
                 lo as u16 | (hi as u16) << 8
             }};
-            (INY) => {{
+            (INY, $read:ident) => {{
                 let a = self.fetch_u8();
-                let lo = self.read_u8(a as u16);
-                let hi = self.read_u8(a.wrapping_add(1) as u16);
-                (lo as u16 | (hi as u16) << 8) + self.reg.y as u16
+                let lo = self.read_u8(a as u16) as u16;
+                let hi = self.read_u8(a.wrapping_add(1) as u16) as u16;
+                let addr = (lo | hi << 8);
+                let tmp = lo + self.reg.y as u16;
+                if !$read || tmp >= 0x100 {
+                    let _ = self.read_u8(hi << 8 | tmp & 0xff);
+                }
+                addr + self.reg.y as u16
             }};
-            (REL) => {{
+            (REL, $read:ident) => {{
                 let rel = self.fetch_u8() as i8;
                 self.reg.pc.wrapping_add(rel as u16)
             }};
-            (UNK) => {{}};
+            (UNK, $read:ident) => {{}};
         }
 
         macro_rules! exec_op {
@@ -497,6 +549,7 @@ impl Cpu {
 
             (rmw, $op:ident, $addr:ident) => {{
                 let mut a = self.read_u8($addr);
+                self.write_u8($addr, a);
                 exec_op!($op, a);
                 self.write_u8($addr, a);
             }};
@@ -579,20 +632,31 @@ impl Cpu {
                 self.reg.pc = $addr;
             }};
             (JSR, $addr:ident) => {{
+                let _ = self.read_u8(self.reg.s as u16 | 0x100);
                 self.push_u16(self.reg.pc.wrapping_sub(1));
                 self.reg.pc = $addr;
             }};
             (RTS) => {{
-                self.reg.pc = self.pop_u16().wrapping_add(1)
+                let _ = self.read_u8(self.reg.s as u16 | 0x100);
+                let pc = self.pop_u16();
+                let _ = self.read_u8(pc);
+                self.reg.pc = pc.wrapping_add(1);
             }};
             (RTI) => {{
+                let _ = self.read_u8(self.reg.s as u16 | 0x100);
                 let p = self.pop_u8();
                 self.reg.flag.set_u8(p);
+                // Flag set by RTI affects interrupts
+                self.i_flag_prev = self.reg.flag.i;
                 self.reg.pc = self.pop_u16()
             }};
 
             (bra, $cond:ident, $val:expr, $addr:ident) => {{
                 if self.reg.flag.$cond == $val {
+                    let _ = self.read_u8(self.reg.pc);
+                    if self.reg.pc & 0xff00 != $addr & 0xff00 {
+                        self.read_u8(self.reg.pc & 0xff00 | $addr & 0xff);
+                    }
                     self.reg.pc = $addr;
                 }
             }};
@@ -650,10 +714,12 @@ impl Cpu {
                 self.push_u8(self.reg.flag.get_u8(3));
             }};
             (PLA) => {{
+                let _ = self.read_u8(self.reg.s as u16 | 0x100);
                 self.reg.a = self.pop_u8();
                 self.reg.flag.set_nz(self.reg.a);
             }};
             (PLP) => {{
+                let _ = self.read_u8(self.reg.s as u16 | 0x100);
                 let p = self.pop_u8();
                 self.reg.flag.set_u8(p);
             }};
@@ -663,9 +729,13 @@ impl Cpu {
                 self.exec_interrupt(Interrupt::Irq, true);
             }};
 
-            (NOP $(, $_:ident)?) => {{}};
+            (NOP) => {{}};
 
             // Undocumented
+            (NOP, $addr:ident) => {{
+                let _ = self.read_u8($addr);
+            }};
+
             (LAX, $addr:ident) => {{
                 self.reg.a = self.read_u8($addr);
                 self.reg.x = self.reg.a;
@@ -873,14 +943,21 @@ impl Cpu {
 
         let asm = format!("{}{}", asm, ctx);
 
+        let ppu_cycle = self.counter * 3 % PPU_CLOCK_PER_FRAME;
+
         log::trace!(target: "disasm-nestest",
-            "{pc:04X}  {bytes:8} {asm:32} A:{a:02X} X:{x:02X} Y:{y:02X} P:{p:02X} SP:{s:02X}",
+            "{pc:04X}  {bytes:8} {asm:32} \
+            A:{a:02X} X:{x:02X} Y:{y:02X} P:{p:02X} SP:{s:02X} \
+            PPU:{line:3},{col:3} CYC:{cyc}",
             pc = self.reg.pc,
             a = self.reg.a,
             x = self.reg.x,
             y = self.reg.y,
             s = self.reg.s,
             p = self.reg.flag.get_u8(2),
+            line = ppu_cycle / PPU_CLOCK_PER_LINE,
+            col = ppu_cycle % PPU_CLOCK_PER_LINE,
+            cyc = self.counter,
         );
     }
 }

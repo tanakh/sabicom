@@ -10,12 +10,13 @@ use crate::{
 };
 
 pub struct Nes {
-    cpu: Cpu,
+    pub cpu: Cpu,
     ppu: Ref<Ppu>,
     apu: Ref<Apu>,
     pub mem: Ref<MemoryMap>,
     rom: Ref<Rom>,
     frame_buf: FrameBuffer,
+    counter: u64,
 }
 
 pub struct State {}
@@ -35,7 +36,7 @@ impl Nes {
                 nmi: nmi_wire.clone(),
             },
         ));
-        let apu = wrap_ref(Apu::new());
+        let apu = wrap_ref(Apu::new(irq_wire.clone()));
 
         let mem = wrap_ref(MemoryMap::new(clone_ref(&ppu), clone_ref(&apu), mapper));
         let cpu = Cpu::new(
@@ -56,6 +57,7 @@ impl Nes {
             cpu,
             mem,
             frame_buf,
+            counter: 0,
         }
     }
 
@@ -66,8 +68,13 @@ impl Nes {
     pub fn exec_frame(&mut self, input: &Input) {
         self.apu.borrow_mut().set_input(input);
 
-        for _ in 0..CLOCK_PER_FRAME {
-            self.cpu.tick();
+        for _ in 0..PPU_CLOCK_PER_FRAME {
+            self.counter += 1;
+            if self.counter > PPU_CLOCK_PER_CPU_CLOCK {
+                self.counter -= PPU_CLOCK_PER_CPU_CLOCK;
+                self.cpu.tick();
+                self.apu.borrow_mut().tick();
+            }
             self.ppu.borrow_mut().tick();
         }
 

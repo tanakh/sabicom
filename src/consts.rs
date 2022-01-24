@@ -1,7 +1,8 @@
 use std::ops::Range;
 
-pub const CLOCK_PER_LINE: u64 = 114; // 113 + 2/3
-pub const CLOCK_PER_FRAME: u64 = CLOCK_PER_LINE * TOTAL_LINES as u64;
+pub const PPU_CLOCK_PER_LINE: u64 = 341;
+pub const PPU_CLOCK_PER_FRAME: u64 = PPU_CLOCK_PER_LINE * TOTAL_LINES as u64;
+pub const PPU_CLOCK_PER_CPU_CLOCK: u64 = 3;
 
 pub const SCREEN_RANGE: Range<usize> = 0..240;
 pub const VBLANK_LINES: usize = 20;
