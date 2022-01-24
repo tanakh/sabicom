@@ -117,6 +117,10 @@ impl Ppu {
                 self.reg.sprite0_hit = false;
             }
 
+            if self.line == 0 && (self.reg.bg_visible || self.reg.sprite_visible) {
+                self.reg.cur_addr = self.reg.tmp_addr;
+            }
+
             if SCREEN_RANGE.contains(&self.line) && (self.reg.bg_visible || self.reg.sprite_visible)
             {
                 self.reg.cur_addr = (self.reg.cur_addr & 0xfbe0) | (self.reg.tmp_addr & 0x041f);
@@ -128,10 +132,7 @@ impl Ppu {
     }
 
     pub fn render_line(&mut self) {
-        let y = self.line;
-
-        let pal0 = self.read_palette(0);
-        let mut buf = vec![pal0; SCREEN_WIDTH];
+        let mut buf = [self.read_palette(0); SCREEN_WIDTH];
 
         if self.reg.bg_visible {
             self.render_bg(&mut buf);
@@ -142,7 +143,7 @@ impl Ppu {
 
         for x in 0..SCREEN_WIDTH {
             self.frame_buf
-                .set(x, y, NES_PALETTE[buf[x] as usize & 0x3f]);
+                .set(x, self.line, NES_PALETTE[buf[x] as usize & 0x3f]);
         }
     }
 
@@ -329,11 +330,11 @@ impl Ppu {
     pub fn write_reg(&mut self, addr: u16, data: u8) {
         self.reg.buf = data;
 
-        let data = data.view_bits::<Lsb0>();
-
         match addr {
             0 => {
                 // Controller
+                let data = data.view_bits::<Lsb0>();
+
                 log::info!(
                     target: "ppureg::PPUCTRL",
                     "= b{data:08b}: nmi={nmi}, ppu={ppu}, spr={sprite_size}, bgpat=${bg_pat_addr:04X}, sprpat=${sprite_pat_addr:04X}, addrinc={ppu_addr_incr}, nt_addr=${base_nametable_addr:04X}",
@@ -359,6 +360,8 @@ impl Ppu {
 
             1 => {
                 // Mask
+                let data = data.view_bits::<Lsb0>();
+
                 log::info!(target: "ppureg::PPUMASK", "= b{data:08b}: bgcol={r}{g}{b}, spr_vis={sprite_visible}, bg_vis={bg_visible}, spr_clip={sprite_clip}, bg_clip={bg_clip}, greyscale={greyscale}",
                     r = if data[5] { "R" } else { "-" },
                     g = if data[6] { "G" } else { "-" },
@@ -385,19 +388,21 @@ impl Ppu {
                 // OAM address
                 log::info!(target: "ppureg::OAMADDR", "= ${data:02X}");
 
-                self.reg.oam_addr = data.load_le();
+                self.reg.oam_addr = data;
             }
             4 => {
                 // OAM data
                 log::info!(target: "ppureg::OAMDATA", "= ${data:02X}: OAM[${oam_addr:02X}] = ${data:02X}",
                     oam_addr = self.reg.oam_addr);
 
-                self.oam[self.reg.oam_addr as usize] = data.load_le();
+                self.oam[self.reg.oam_addr as usize] = data;
                 self.reg.oam_addr = self.reg.oam_addr.wrapping_add(1);
             }
             5 => {
                 // Scroll
                 log::info!(target: "ppureg::PPUSCROLL", "= ${data:02X}");
+
+                let data = data.view_bits::<Lsb0>();
 
                 if !self.reg.toggle {
                     self.reg.tmp_addr = (self.reg.tmp_addr & 0x7fe0) | data[3..8].load_le::<u16>();
@@ -412,6 +417,8 @@ impl Ppu {
             6 => {
                 // Address
                 log::info!(target: "ppureg::PPUADDR", "= ${data:02X}");
+
+                let data = data.view_bits::<Lsb0>();
 
                 if !self.reg.toggle {
                     self.reg.tmp_addr =
@@ -428,7 +435,7 @@ impl Ppu {
 
                 log::info!(target: "ppureg::PPUDATA", "= ${data:02X}, CHR[${addr:04X}] <- ${data:02X}");
 
-                self.mapper.borrow_mut().write_chr(addr, data.load_be());
+                self.mapper.borrow_mut().write_chr(addr, data);
 
                 let inc_addr = if self.reg.ppu_addr_incr { 32 } else { 1 };
                 self.reg.cur_addr = self.reg.cur_addr.wrapping_add(inc_addr);

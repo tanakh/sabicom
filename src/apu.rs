@@ -79,11 +79,13 @@ impl Apu {
     pub fn read_reg(&mut self, addr: u16) -> u8 {
         let ret = match addr {
             0x4015 => {
-                // todo
+                // Status
+                let mut ret = 0;
+                let r = ret.view_bits_mut::<Lsb0>();
+                r.set(6, self.irq_line.get());
 
                 self.irq_line.set(false);
-
-                0
+                ret
             }
 
             0x4016 | 0x4017 => {
@@ -98,7 +100,10 @@ impl Apu {
                 }
             }
 
-            _ => 0xA0,
+            _ => {
+                log::warn!("Read APU ${addr:04X}");
+                0xA0
+            }
         };
         log::info!("Read APU ${addr:04X} = {ret:02X}");
         ret
@@ -138,7 +143,9 @@ impl Apu {
 
                 self.frame_counter_reset_delay = 3;
             }
-            _ => {}
+            _ => {
+                log::warn!("Write APU ${addr:04X} = ${data:02X}");
+            }
         }
     }
 }

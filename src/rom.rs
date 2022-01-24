@@ -24,7 +24,7 @@ pub enum RomFormat {
     Nes20,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 pub enum Mirroring {
     Horizontal,
     Vertical,
