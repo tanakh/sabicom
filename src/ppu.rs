@@ -14,6 +14,8 @@ pub struct Ppu {
     counter: u64,
     mapper: Ref<dyn Mapper>,
     wires: Wires,
+    line_buf: Vec<u8>,
+    sprite0_hit: Vec<bool>,
     pub frame_buf: FrameBuffer,
 }
 
@@ -69,17 +71,27 @@ impl Ppu {
             line: 0,
             mapper,
             wires,
+            line_buf: vec![0x00; SCREEN_WIDTH],
+            sprite0_hit: vec![false; SCREEN_WIDTH],
             frame_buf: FrameBuffer::new(SCREEN_WIDTH, SCREEN_HEIGHT),
         }
     }
 
     pub fn tick(&mut self) {
-        self.counter += 1;
+        // 1 PPU cycle for 1 pixel
 
-        if self.counter >= PPU_CLOCK_PER_LINE {
-            self.counter -= PPU_CLOCK_PER_LINE;
+        let screen_visible = self.reg.bg_visible || self.reg.sprite_visible;
 
-            let screen_visible = self.reg.bg_visible || self.reg.sprite_visible;
+        if self.counter == 0 {
+            log::info!("line {} starts", self.line);
+
+            if self.line == SCREEN_RANGE.start && screen_visible {
+                self.reg.cur_addr = self.reg.tmp_addr;
+            }
+
+            if SCREEN_RANGE.contains(&self.line) && screen_visible {
+                self.reg.cur_addr = (self.reg.cur_addr & 0xfbe0) | (self.reg.tmp_addr & 0x041f);
+            }
 
             if SCREEN_RANGE.contains(&self.line) {
                 self.render_line();
@@ -99,31 +111,34 @@ impl Ppu {
                     }
                 }
             }
+        }
+
+        if (self.line, self.counter) == (POST_RENDER_LINE + 1, 1) {
+            log::info!("enter vblank");
+            self.reg.vblank = true;
+        }
+
+        if (self.line, self.counter) == (PRE_RENDER_LINE, 1) {
+            log::info!("leave vblank");
+            self.reg.vblank = false;
+            self.reg.sprite0_hit = false;
+        }
+
+        if screen_visible
+            && self.counter < SCREEN_WIDTH as u64
+            && self.sprite0_hit[self.counter as usize]
+        {
+            self.reg.sprite0_hit = true;
+        }
+
+        self.counter += 1;
+
+        if self.counter == PPU_CLOCK_PER_LINE {
+            self.counter = 0;
 
             self.line += 1;
-            if self.line >= LINES_PER_FRAME {
+            if self.line == LINES_PER_FRAME {
                 self.line = 0;
-            }
-
-            log::info!("line {} starts", self.line);
-
-            if self.line == POST_RENDER_LINE + 1 {
-                log::info!("enter vblank");
-                self.reg.vblank = true;
-            }
-
-            if self.line == PRE_RENDER_LINE {
-                log::info!("leave vblank");
-                self.reg.vblank = false;
-                self.reg.sprite0_hit = false;
-            }
-
-            if self.line == SCREEN_RANGE.start && screen_visible {
-                self.reg.cur_addr = self.reg.tmp_addr;
-            }
-
-            if SCREEN_RANGE.contains(&self.line) && screen_visible {
-                self.reg.cur_addr = (self.reg.cur_addr & 0xfbe0) | (self.reg.tmp_addr & 0x041f);
             }
         }
 
@@ -132,22 +147,24 @@ impl Ppu {
     }
 
     pub fn render_line(&mut self) {
-        let mut buf = [self.read_palette(0) & 0x3f; SCREEN_WIDTH];
+        let bg = self.read_palette(0) & 0x3f;
+        self.line_buf.fill(bg);
+        self.sprite0_hit.fill(false);
 
         if self.reg.bg_visible {
-            self.render_bg(&mut buf);
+            self.render_bg();
         }
         if self.reg.sprite_visible {
-            self.render_spr(&mut buf);
+            self.render_spr();
         }
 
         for x in 0..SCREEN_WIDTH {
             self.frame_buf
-                .set(x, self.line, NES_PALETTE[buf[x] as usize & 0x3f]);
+                .set(x, self.line, NES_PALETTE[self.line_buf[x] as usize & 0x3f]);
         }
     }
 
-    pub fn render_bg(&mut self, buf: &mut [u8]) {
+    pub fn render_bg(&mut self) {
         let x_ofs = self.reg.scroll_x as usize;
         let y_ofs = (self.reg.cur_addr >> 12) & 7;
         let pat_addr = if self.reg.bg_pat_addr { 0x1000 } else { 0x0000 };
@@ -181,7 +198,7 @@ impl Ppu {
 
                 let b = (b0 >> (7 - lx)) & 1 | ((b1 >> (7 - lx)) & 1) << 1;
                 if b != 0 {
-                    buf[x - 8] = 0x40 + self.read_palette(attr << 2 | b);
+                    self.line_buf[x - 8] = 0x40 + self.read_palette(attr << 2 | b);
                 }
             }
 
@@ -193,7 +210,7 @@ impl Ppu {
         }
     }
 
-    pub fn render_spr(&mut self, buf: &mut [u8]) {
+    pub fn render_spr(&mut self) {
         let spr_height = if self.reg.sprite_size { 16 } else { 8 };
         let pat_addr = if self.reg.sprite_pat_addr { 0x1000 } else { 0 };
 
@@ -241,13 +258,13 @@ impl Ppu {
                 }
 
                 let lo = (b0 >> lx) & 1 | ((b1 >> lx) & 1) << 1;
-                if lo != 0 && buf[x] & 0x80 == 0 {
-                    if !is_bg || buf[x] & 0x40 == 0 {
-                        buf[x] = self.read_palette(0x10 | upper | lo);
+                if lo != 0 && self.line_buf[x] & 0x80 == 0 {
+                    if !is_bg || self.line_buf[x] & 0x40 == 0 {
+                        self.line_buf[x] = self.read_palette(0x10 | upper | lo);
                     }
-                    buf[x] |= 0x80;
+                    self.line_buf[x] |= 0x80;
                     if i == 0 {
-                        self.reg.sprite0_hit = true;
+                        self.sprite0_hit[x] = true;
                     }
                 }
             }
