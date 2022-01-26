@@ -16,7 +16,29 @@ pub struct Nes {
     pub mem: Ref<MemoryMap>,
     rom: Ref<Rom>,
     frame_buf: FrameBuffer,
+    audio_buf: Vec<i16>,
     counter: u64,
+    wires: Wires,
+}
+
+struct Wires {
+    nmi_wire: Wire<bool>,
+    rst_wire: Wire<bool>,
+    apu_frame_irq_wire: Wire<bool>,
+    apu_dmc_irq_wire: Wire<bool>,
+    cpu_irq_wire: Wire<bool>,
+}
+
+impl Wires {
+    fn new() -> Self {
+        Self {
+            nmi_wire: Wire::new(false),
+            rst_wire: Wire::new(false),
+            apu_frame_irq_wire: Wire::new(false),
+            apu_dmc_irq_wire: Wire::new(false),
+            cpu_irq_wire: Wire::new(false),
+        }
+    }
 }
 
 pub struct State {}
@@ -26,25 +48,29 @@ impl Nes {
         let rom = wrap_ref(rom);
         let mapper = create_mapper(clone_ref(&rom));
 
-        let nmi_wire = Wire::new(false);
-        let irq_wire = Wire::new(false);
-        let rst_wire = Wire::new(false);
+        let wires = Wires::new();
+
+        // FIXME: irq wire connect to or gate
 
         let ppu = wrap_ref(Ppu::new(
             clone_ref(&mapper),
             ppu::Wires {
-                nmi: nmi_wire.clone(),
+                nmi: wires.nmi_wire.clone(),
             },
         ));
-        let apu = wrap_ref(Apu::new(irq_wire.clone()));
+        let apu = wrap_ref(Apu::new(
+            clone_ref(&mapper),
+            wires.apu_frame_irq_wire.clone(),
+            wires.apu_dmc_irq_wire.clone(),
+        ));
 
         let mem = wrap_ref(MemoryMap::new(clone_ref(&ppu), clone_ref(&apu), mapper));
         let cpu = Cpu::new(
             clone_ref(&mem),
             cpu::Wires {
-                nmi: nmi_wire.clone(),
-                irq: irq_wire.clone(),
-                rst: rst_wire.clone(),
+                nmi: wires.nmi_wire.clone(),
+                irq: wires.cpu_irq_wire.clone(),
+                rst: wires.rst_wire.clone(),
             },
         );
 
@@ -57,7 +83,9 @@ impl Nes {
             cpu,
             mem,
             frame_buf,
+            audio_buf: vec![],
             counter: 0,
+            wires,
         }
     }
 
@@ -72,6 +100,10 @@ impl Nes {
             self.counter += 1;
             if self.counter > PPU_CLOCK_PER_CPU_CLOCK {
                 self.counter -= PPU_CLOCK_PER_CPU_CLOCK;
+
+                let irq = self.wires.apu_frame_irq_wire.get() || self.wires.apu_dmc_irq_wire.get();
+                self.wires.cpu_irq_wire.set(irq);
+
                 self.cpu.tick();
                 self.apu.borrow_mut().tick();
             }
@@ -81,10 +113,23 @@ impl Nes {
         self.frame_buf
             .buf
             .copy_from_slice(&self.ppu.borrow().frame_buf.buf);
+
+        {
+            let mut apu = self.apu.borrow_mut();
+            self.audio_buf.resize(apu.audio_buf.len(), 0);
+            for i in 0..self.audio_buf.len() {
+                self.audio_buf[i] = apu.audio_buf[i];
+            }
+            apu.audio_buf.clear();
+        }
     }
 
     pub fn get_frame_buf(&self) -> &FrameBuffer {
         &self.frame_buf
+    }
+
+    pub fn get_audio_buf(&self) -> &[i16] {
+        &self.audio_buf
     }
 
     pub fn save_state(&self) -> State {

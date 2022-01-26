@@ -139,6 +139,18 @@ impl MemoryController {
 
     pub fn set_mirroring(&mut self, mirroring: Mirroring) {
         match mirroring {
+            Mirroring::OneScreenLow => {
+                self.map_nametable(0, 0);
+                self.map_nametable(1, 0);
+                self.map_nametable(2, 0);
+                self.map_nametable(3, 0);
+            }
+            Mirroring::OneScreenHigh => {
+                self.map_nametable(0, 1);
+                self.map_nametable(1, 1);
+                self.map_nametable(2, 1);
+                self.map_nametable(3, 1);
+            }
             Mirroring::Horizontal => {
                 self.map_nametable(0, 0);
                 self.map_nametable(1, 0);

@@ -33,7 +33,6 @@ struct Register {
     sprite_pat_addr: bool,
     ppu_addr_incr: bool,
 
-    // base_nametable_addr: u8,
     bg_color: u8,
     sprite_visible: bool,
     bg_visible: bool,
@@ -80,10 +79,12 @@ impl Ppu {
         if self.counter >= PPU_CLOCK_PER_LINE {
             self.counter -= PPU_CLOCK_PER_LINE;
 
+            let screen_visible = self.reg.bg_visible || self.reg.sprite_visible;
+
             if SCREEN_RANGE.contains(&self.line) {
                 self.render_line();
 
-                if self.reg.bg_visible || self.reg.sprite_visible {
+                if screen_visible {
                     if (self.reg.cur_addr >> 12) & 7 == 7 {
                         self.reg.cur_addr &= !0x7000;
                         if ((self.reg.cur_addr >> 5) & 0x1f) == 29 {
@@ -100,7 +101,7 @@ impl Ppu {
             }
 
             self.line += 1;
-            if self.line >= TOTAL_LINES {
+            if self.line >= LINES_PER_FRAME {
                 self.line = 0;
             }
 
@@ -117,12 +118,11 @@ impl Ppu {
                 self.reg.sprite0_hit = false;
             }
 
-            if self.line == 0 && (self.reg.bg_visible || self.reg.sprite_visible) {
+            if self.line == SCREEN_RANGE.start && screen_visible {
                 self.reg.cur_addr = self.reg.tmp_addr;
             }
 
-            if SCREEN_RANGE.contains(&self.line) && (self.reg.bg_visible || self.reg.sprite_visible)
-            {
+            if SCREEN_RANGE.contains(&self.line) && screen_visible {
                 self.reg.cur_addr = (self.reg.cur_addr & 0xfbe0) | (self.reg.tmp_addr & 0x041f);
             }
         }
@@ -155,28 +155,37 @@ impl Ppu {
         let mut name_addr = self.reg.cur_addr & 0xfff;
 
         for i in 0..33 {
-            let tile = self.read_nametable(name_addr);
-            let l = self.read_pattern(pat_addr + (tile as u16 * 16) + y_ofs);
-            let h = self.read_pattern(pat_addr + (tile as u16 * 16) + y_ofs + 8);
+            let tile = self.read_nametable(name_addr) as u16 * 16;
 
-            let tx = name_addr & 0x1f;
-            let ty = (name_addr >> 5) & 0x1f;
-            let attr_addr = (name_addr & 0xC00) + 0x3C0 + ((ty & !3) << 1) + (tx >> 2);
-            let aofs = (if (ty & 2) == 0 { 0 } else { 4 }) + (if (tx & 2) == 0 { 0 } else { 2 });
-            let attr = ((self.read_nametable(attr_addr) >> aofs) & 3) << 2;
+            let b0 = self.read_pattern(pat_addr + tile + y_ofs);
+            let b1 = self.read_pattern(pat_addr + tile + 8 + y_ofs);
+
+            let name_addr_v = name_addr.view_bits::<Lsb0>();
+            let tx = &name_addr_v[0..5];
+            let ty = &name_addr_v[5..10];
+
+            let attr_addr = bits![mut u16, Lsb0; 0; 16];
+            attr_addr[10..12].copy_from_bitslice(&name_addr_v[10..12]);
+            attr_addr[6..10].store(0b1111_u16);
+            attr_addr[3..6].copy_from_bitslice(&ty[2..5]);
+            attr_addr[0..3].copy_from_bitslice(&tx[2..5]);
+
+            let aofs = tx[1] as usize * 2 + ty[1] as usize * 4;
+            let attr = (self.read_nametable(attr_addr.load()) >> aofs) & 3;
 
             for lx in 0..8 {
                 let x = (i * 8 + lx + 8 - x_ofs) as usize;
                 if !(x >= 8 && x < SCREEN_WIDTH + 8) {
                     continue;
                 }
-                let b = (l >> (7 - lx)) & 1 | ((h >> (7 - lx)) & 1) << 1;
+
+                let b = (b0 >> (7 - lx)) & 1 | ((b1 >> (7 - lx)) & 1) << 1;
                 if b != 0 {
-                    buf[x - 8] = 0x40 + self.read_palette(b | attr);
+                    buf[x - 8] = 0x40 + self.read_palette(attr << 2 | b);
                 }
             }
 
-            if (name_addr & 0x1f) == 0x1f {
+            if name_addr & 0x1f == 0x1f {
                 name_addr = (name_addr & !0x1f) ^ 0x400;
             } else {
                 name_addr += 1;
@@ -190,67 +199,57 @@ impl Ppu {
 
         for i in 0..64 {
             let r = &self.oam[i * 4..(i + 1) * 4];
-
             let spr_y = r[0] as usize + 1;
-            let attr = r[2];
 
             if !(spr_y..spr_y + spr_height).contains(&self.line) {
                 continue;
             }
 
             let tile_index = r[1] as u16;
-            let spr_x = r[3];
-            let is_bg = attr & 0x20 != 0;
-            let upper = (attr & 3) << 2;
+            let spr_x = r[3] as usize;
 
-            log::trace!("sprite {i}, x = {spr_x}, y = {spr_y}");
+            log::trace!("sprite {i}, x = {spr_x}, y = {spr_y}, tile = {tile_index}");
 
-            let h_flip = attr & 0x40 == 0;
-            let sx = if h_flip { 7 } else { 0 };
-            let ex = if h_flip { -1 } else { 8 };
-            let ix = if h_flip { -1 } else { 1 };
+            let attr = r[2].view_bits::<Lsb0>();
+            let upper = attr[0..2].load::<u8>() << 2;
+            let is_bg = attr[5];
+            let h_flip = !attr[6];
+            let v_flip = attr[7];
 
-            let v_flip = attr & 0x80 != 0;
-
-            let mut y_ofs = self.line - spr_y;
-            if v_flip {
-                y_ofs = spr_height - 1 - y_ofs;
-            }
+            let y_ofs = if v_flip {
+                spr_height - 1 - (self.line - spr_y)
+            } else {
+                self.line - spr_y
+            };
 
             let tile_addr = if spr_height == 16 {
                 (tile_index & !1) * 16
-                    + ((tile_index & 1) * 0x1000)
+                    + (tile_index & 1) * 0x1000
                     + if y_ofs >= 8 { 16 } else { 0 }
                     + (y_ofs as u16 & 7)
             } else {
                 pat_addr + tile_index * 16 + y_ofs as u16
             };
 
-            let mut l = self.read_pattern(tile_addr);
-            let mut u = self.read_pattern(tile_addr + 8);
+            let b0 = self.read_pattern(tile_addr);
+            let b1 = self.read_pattern(tile_addr + 8);
 
-            let mut x = sx;
-            while x != ex {
-                let pos = spr_x as usize + x as usize;
-                if pos >= SCREEN_WIDTH {
-                    break;
+            for lx in 0..8 {
+                let x = spr_x + if h_flip { 7 - lx } else { lx };
+                if x >= SCREEN_WIDTH {
+                    continue;
                 }
 
-                let lower = (l & 1) | ((u & 1) << 1);
-                if lower != 0 && buf[pos] & 0x80 == 0 {
-                    if !is_bg || buf[pos] & 0x40 == 0 {
-                        buf[pos] = self.read_palette(0x10 | upper | lower);
+                let lo = (b0 >> lx) & 1 | ((b1 >> lx) & 1) << 1;
+                if lo != 0 && buf[x] & 0x80 == 0 {
+                    if !is_bg || buf[x] & 0x40 == 0 {
+                        buf[x] = self.read_palette(0x10 | upper | lo);
                     }
-                    buf[pos] |= 0x80;
+                    buf[x] |= 0x80;
                     if i == 0 {
                         self.reg.sprite0_hit = true;
                     }
                 }
-
-                l >>= 1;
-                u >>= 1;
-
-                x += ix;
             }
         }
     }
@@ -271,20 +270,18 @@ impl Ppu {
         let ret = match addr {
             2 => {
                 // Status
-                let mut ret = self.reg.buf & 0x1f;
+                let ret = bits![mut u8, Lsb0; 0; 8];
+                ret[0..5].store(self.reg.buf & 0x1f);
+                ret.set(5, self.reg.sprite_over);
+                ret.set(6, self.reg.sprite0_hit);
+                ret.set(7, self.reg.vblank);
 
-                let bits = ret.view_bits_mut::<Lsb0>();
-                bits.set(7, self.reg.vblank);
-                bits.set(6, self.reg.sprite0_hit);
-                bits.set(5, self.reg.sprite_over);
-
-                // FIXME: Least significant bits previously written into a PPU register
                 self.reg.vblank = false;
                 self.reg.toggle = false;
 
                 log::info!(target: "ppureg", "[PPUSTATUS] -> ${ret:02X}");
 
-                ret
+                ret.load()
             }
 
             4 => {
@@ -359,8 +356,7 @@ impl Ppu {
                 self.reg.sprite_pat_addr = data[3];
                 self.reg.ppu_addr_incr = data[2];
 
-                self.reg.tmp_addr =
-                    (self.reg.tmp_addr & 0x73FF) | (data[0..2].load_le::<u16>() << 10);
+                self.reg.tmp_addr.view_bits_mut::<Lsb0>()[10..12].store(data[0..2].load::<u16>());
             }
 
             1 => {

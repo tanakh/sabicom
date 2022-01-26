@@ -60,13 +60,14 @@ fn main(file: PathBuf) -> Result<()> {
 
     let audio_subsystem = sdl_context.audio().map_err(|e| anyhow!("{e}"))?;
     let desired_spec = AudioSpecDesired {
-        freq: Some(44100),
-        channels: Some(2),
+        freq: Some(48000),
+        channels: Some(1),
         samples: Some(2048),
     };
     let device: AudioQueue<i16> = audio_subsystem
         .open_queue(None, &desired_spec)
         .map_err(|e| anyhow!("{e}"))?;
+    device.queue(&vec![0; 2048]);
     device.resume();
 
     let mut event_pump = sdl_context.event_pump().map_err(|e| anyhow!("{e}"))?;
@@ -119,7 +120,17 @@ fn main(file: PathBuf) -> Result<()> {
 
         canvas.present();
 
-        timer.wait_for_frame(FPS);
+        let audio_buf = nes.get_audio_buf();
+        assert!((799..=801).contains(&audio_buf.len()));
+
+        while device.size() > 2048 * 2 {
+            std::thread::sleep(Duration::from_millis(1));
+        }
+
+        device.queue(&audio_buf.iter().cloned().collect::<Vec<_>>());
+
+        // FIXME
+        timer.wait_for_frame(FPS * 2.0);
     }
 
     Ok(())

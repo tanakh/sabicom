@@ -1,19 +1,15 @@
-use crate::{memory::MemoryController, rom::Rom, util::Ref};
+use crate::{
+    memory::MemoryController,
+    rom::{Mirroring, Rom},
+    util::Ref,
+};
 
 pub struct Mmc1 {
-    mirriring: Mirroring,
     prg_rom_bank_mode: PrgRomBankMode,
     chr_rom_bank_mode: ChrRomBankMode,
     buf: u8,
     cnt: usize,
     ctrl: MemoryController,
-}
-
-enum Mirroring {
-    OneScreenLow,
-    OneScreenHigh,
-    Vertical,
-    Horizontal,
 }
 
 enum PrgRomBankMode {
@@ -29,11 +25,15 @@ enum ChrRomBankMode {
 
 impl Mmc1 {
     pub fn new(rom: Ref<Rom>) -> Self {
-        let ctrl = MemoryController::new(rom);
+        let mut ctrl = MemoryController::new(rom);
+        let prg_pages = ctrl.prg_pages();
+        ctrl.map_prg(0, 0);
+        ctrl.map_prg(1, 1);
+        ctrl.map_prg(2, prg_pages - 2);
+        ctrl.map_prg(3, prg_pages - 1);
 
         Self {
-            mirriring: Mirroring::OneScreenLow,
-            prg_rom_bank_mode: PrgRomBankMode::Switch32K,
+            prg_rom_bank_mode: PrgRomBankMode::Switch16KLow,
             chr_rom_bank_mode: ChrRomBankMode::Switch8K,
             buf: 0,
             cnt: 0,
@@ -52,8 +52,14 @@ impl super::Mapper for Mmc1 {
     }
 
     fn write_prg(&mut self, addr: u16, data: u8) {
+        if addr & 0x8000 == 0 {
+            return self.ctrl.write_prg(addr, data);
+        }
+
+        log::trace!("MMC1: {addr:04X} <- {data:02X}");
+
         if data & 0x80 != 0 {
-            log::info!("MMC1: Reset");
+            log::trace!("MMC1: Reset");
             self.buf = 0;
             self.cnt = 0;
             return;
@@ -72,22 +78,22 @@ impl super::Mapper for Mmc1 {
 
         let reg_num = (addr >> 13) & 3;
 
-        log::info!("MMC1: [{reg_num}] <- {cmd:02X}");
+        log::trace!("MMC1: reg[{reg_num}] <- ${cmd:02X} (b{cmd:05b})");
 
         match reg_num {
             0 => {
-                self.mirriring = match cmd & 0x3 {
+                self.ctrl.set_mirroring(match cmd & 0x3 {
                     0 => Mirroring::OneScreenLow,
                     1 => Mirroring::OneScreenHigh,
                     2 => Mirroring::Vertical,
                     3 => Mirroring::Horizontal,
                     _ => unreachable!(),
-                };
+                });
 
                 self.prg_rom_bank_mode = match (cmd >> 2) & 3 {
                     0 | 1 => PrgRomBankMode::Switch32K,
-                    2 => PrgRomBankMode::Switch16KLow,
-                    3 => PrgRomBankMode::Switch16KHigh,
+                    2 => PrgRomBankMode::Switch16KHigh,
+                    3 => PrgRomBankMode::Switch16KLow,
                     _ => unreachable!(),
                 };
 
@@ -113,7 +119,7 @@ impl super::Mapper for Mmc1 {
             },
             2 => match self.chr_rom_bank_mode {
                 ChrRomBankMode::Switch8K => {
-                    // Ignore command
+                    log::warn!("MMC1: High CHR page set on 8K CHR mode");
                 }
                 ChrRomBankMode::Switch4K => {
                     let page = cmd as usize;

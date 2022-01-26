@@ -26,6 +26,8 @@ pub enum RomFormat {
 
 #[derive(Debug, Clone, Copy)]
 pub enum Mirroring {
+    OneScreenLow,
+    OneScreenHigh,
     Horizontal,
     Vertical,
     FourScreen,
