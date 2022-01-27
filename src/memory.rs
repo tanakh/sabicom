@@ -3,7 +3,7 @@ use crate::{
     mapper::Mapper,
     ppu::Ppu,
     rom::{Mirroring, Rom},
-    util::Ref,
+    util::{Ref, Wire},
 };
 
 pub struct MemoryMap {
@@ -11,16 +11,25 @@ pub struct MemoryMap {
     ppu: Ref<Ppu>,
     apu: Ref<Apu>,
     mapper: Ref<dyn Mapper>,
+    wires: Wires,
     pub cpu_stall: u64,
 }
 
+pub struct Wires {
+    pub apu_frame_irq_wire: Wire<bool>,
+    pub apu_dmc_irq_wire: Wire<bool>,
+    pub mapper_irq_wire: Wire<bool>,
+    pub cpu_irq_wire: Wire<bool>,
+}
+
 impl MemoryMap {
-    pub fn new(ppu: Ref<Ppu>, apu: Ref<Apu>, mapper: Ref<dyn Mapper>) -> Self {
+    pub fn new(ppu: Ref<Ppu>, apu: Ref<Apu>, mapper: Ref<dyn Mapper>, wires: Wires) -> Self {
         Self {
             ram: vec![0x00; 2 * 1024],
             ppu,
             apu,
             mapper,
+            wires,
             cpu_stall: 0,
         }
     }
@@ -54,6 +63,22 @@ impl MemoryMap {
                 self.cpu_stall += 513
             }
         }
+    }
+
+    pub fn tick(&mut self) {
+        for _ in 0..3 {
+            self.ppu.borrow_mut().tick();
+            self.mapper.borrow_mut().tick();
+        }
+        self.apu.borrow_mut().tick();
+        self.sync_wires();
+    }
+
+    fn sync_wires(&mut self) {
+        let output = self.wires.apu_frame_irq_wire.get()
+            || self.wires.apu_dmc_irq_wire.get()
+            || self.wires.mapper_irq_wire.get();
+        self.wires.cpu_irq_wire.set(output);
     }
 }
 

@@ -135,15 +135,15 @@ impl Cpu {
     }
 
     fn read_u8(&mut self, addr: u16) -> u8 {
-        self.counter += 1;
         let ret = self.mem.borrow().read(addr);
+        self.tick_bus();
         log::trace!(target: "prgmem", "[${addr:04X}] -> ${ret:02X}");
         ret
     }
 
     fn write_u8(&mut self, addr: u16, data: u8) {
-        self.counter += 1;
         self.mem.borrow_mut().write(addr, data);
+        self.tick_bus();
         log::trace!(target: "prgmem", "[${addr:04X}] <- ${data:02X}");
     }
 
@@ -283,10 +283,11 @@ macro_rules! instructions {
 
 impl Cpu {
     pub fn tick(&mut self) {
-        {
-            if self.mem.borrow().cpu_stall > 0 {
-                self.counter += self.mem.borrow().cpu_stall;
-                self.mem.borrow_mut().cpu_stall = 0;
+        let stall = self.mem.borrow().cpu_stall;
+        if stall > 0 {
+            self.mem.borrow_mut().cpu_stall = 0;
+            for _ in 0..stall {
+                self.tick_bus();
             }
         }
 
@@ -312,6 +313,11 @@ impl Cpu {
                 continue;
             }
         }
+    }
+
+    fn tick_bus(&mut self) {
+        self.counter += 1;
+        self.mem.borrow_mut().tick();
     }
 
     fn exec_one(&mut self) {

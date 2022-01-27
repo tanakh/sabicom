@@ -81,7 +81,8 @@ fn main(file: PathBuf) -> Result<()> {
     while process_events(&mut event_pump) {
         let input = input_manager.get_input(&event_pump);
 
-        nes.exec_frame(&input);
+        nes.set_input(&input);
+        nes.exec_frame();
 
         surface.with_lock_mut(|r| {
             let buf = nes.get_frame_buf();
@@ -125,7 +126,11 @@ fn main(file: PathBuf) -> Result<()> {
         canvas.present();
 
         let audio_buf = nes.get_audio_buf();
-        assert!((799..=801).contains(&audio_buf.len()));
+        assert!(
+            (799..=801).contains(&audio_buf.len()),
+            "invalid generated audio length: {}",
+            audio_buf.len()
+        );
 
         while device.size() > 2048 * 2 {
             std::thread::sleep(Duration::from_millis(1));
@@ -161,7 +166,6 @@ fn process_events(event_pump: &mut EventPump) -> bool {
 
 struct InputManager {
     key_config: KeyConfig,
-    gcs: GameControllerSubsystem,
     controllers: Vec<GameController>,
 }
 
@@ -277,7 +281,6 @@ impl InputManager {
 
         Ok(Self {
             key_config,
-            gcs,
             controllers,
         })
     }

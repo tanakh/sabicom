@@ -36,7 +36,7 @@ fn test_nestest() -> anyhow::Result<()> {
     // nestest.nes batch mode is start at 0xC000
     nes.cpu.reg.pc = 0xC000;
 
-    nes.exec_frame(&sabicom::util::Input::default());
+    nes.exec_frame();
 
     let my_output = output.lock().unwrap();
 

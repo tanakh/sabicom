@@ -3,7 +3,7 @@ use crate::{
     consts::*,
     cpu::{self, Cpu},
     mapper::{create_mapper, Mapper},
-    memory::MemoryMap,
+    memory::{self, MemoryMap},
     ppu::{self, Ppu},
     rom::Rom,
     util::{clone_ref, wrap_ref, FrameBuffer, Input, Ref, Wire},
@@ -18,11 +18,10 @@ pub struct Nes {
     rom: Ref<Rom>,
     frame_buf: FrameBuffer,
     audio_buf: Vec<i16>,
-    counter: u64,
     wires: Wires,
 }
 
-struct Wires {
+pub struct Wires {
     nmi_wire: Wire<bool>,
     rst_wire: Wire<bool>,
     apu_frame_irq_wire: Wire<bool>,
@@ -41,12 +40,6 @@ impl Wires {
             mapper_irq_wire: Wire::new(false),
             cpu_irq_wire: Wire::new(false),
         }
-    }
-    fn sync(&self) {
-        let irq = self.apu_frame_irq_wire.get()
-            || self.apu_dmc_irq_wire.get()
-            || self.mapper_irq_wire.get();
-        self.cpu_irq_wire.set(irq);
     }
 }
 
@@ -77,6 +70,12 @@ impl Nes {
             clone_ref(&ppu),
             clone_ref(&apu),
             clone_ref(&mapper),
+            memory::Wires {
+                apu_frame_irq_wire: wires.apu_frame_irq_wire.clone(),
+                apu_dmc_irq_wire: wires.apu_dmc_irq_wire.clone(),
+                mapper_irq_wire: wires.mapper_irq_wire.clone(),
+                cpu_irq_wire: wires.cpu_irq_wire.clone(),
+            },
         ));
         let cpu = Cpu::new(
             clone_ref(&mem),
@@ -98,7 +97,6 @@ impl Nes {
             mapper,
             frame_buf,
             audio_buf: vec![],
-            counter: 0,
             wires,
         }
     }
@@ -107,22 +105,19 @@ impl Nes {
         todo!("reset")
     }
 
-    pub fn exec_frame(&mut self, input: &Input) {
-        self.apu.borrow_mut().set_input(input);
+    pub fn exec_frame(&mut self) {
+        let frame = self.ppu.borrow().frame();
 
-        for _ in 0..PPU_CLOCK_PER_FRAME {
-            self.counter += 1;
-            if self.counter > PPU_CLOCK_PER_CPU_CLOCK {
-                self.counter -= PPU_CLOCK_PER_CPU_CLOCK;
-
-                self.wires.sync();
-                self.cpu.tick();
-                self.apu.borrow_mut().tick();
-            }
-            self.ppu.borrow_mut().tick();
-            self.mapper.borrow_mut().tick();
+        while frame == self.ppu.borrow().frame() {
+            self.cpu.tick();
         }
+    }
 
+    pub fn set_input(&mut self, input: &Input) {
+        self.apu.borrow_mut().set_input(input);
+    }
+
+    pub fn get_frame_buf(&mut self) -> &FrameBuffer {
         self.frame_buf
             .buf
             .copy_from_slice(&self.ppu.borrow().frame_buf.buf);
@@ -135,9 +130,7 @@ impl Nes {
             }
             apu.audio_buf.clear();
         }
-    }
 
-    pub fn get_frame_buf(&self) -> &FrameBuffer {
         &self.frame_buf
     }
 

@@ -10,8 +10,9 @@ use bitvec::prelude::*;
 pub struct Ppu {
     reg: Register,
     oam: Vec<u8>,
+    counter: usize,
     line: usize,
-    counter: u64,
+    frame: u64,
     mapper: Ref<dyn Mapper>,
     wires: Wires,
     line_buf: Vec<u8>,
@@ -69,6 +70,7 @@ impl Ppu {
             oam: vec![0x00; 256],
             counter: 0,
             line: 0,
+            frame: 0,
             mapper,
             wires,
             line_buf: vec![0x00; SCREEN_WIDTH],
@@ -126,7 +128,7 @@ impl Ppu {
 
         if screen_visible
             && SCREEN_RANGE.contains(&self.line)
-            && self.counter < SCREEN_WIDTH as u64
+            && self.counter < SCREEN_WIDTH
             && self.sprite0_hit[self.counter as usize]
         {
             self.reg.sprite0_hit = true;
@@ -134,17 +136,21 @@ impl Ppu {
 
         self.counter += 1;
 
-        if self.counter == PPU_CLOCK_PER_LINE {
+        if self.counter == PPU_CLOCK_PER_LINE as usize {
             self.counter = 0;
-
             self.line += 1;
             if self.line == LINES_PER_FRAME {
                 self.line = 0;
+                self.frame += 1;
             }
         }
 
         let nmi_line = !(self.reg.vblank && self.reg.nmi_enable);
         self.wires.nmi.set(nmi_line);
+    }
+
+    pub fn frame(&self) -> u64 {
+        self.frame
     }
 
     pub fn render_line(&mut self) {

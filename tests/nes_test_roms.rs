@@ -7,7 +7,6 @@ fn test_rom(path: impl AsRef<Path>) -> Result<()> {
     let dat = std::fs::read(path.as_ref())?;
     let rom = sabicom::rom::Rom::from_bytes(&dat)?;
     let mut nes = sabicom::nes::Nes::new(rom, None);
-    let input = sabicom::util::Input::default();
 
     let mut cnt = 0;
     let mut starting = true;
@@ -20,7 +19,7 @@ fn test_rom(path: impl AsRef<Path>) -> Result<()> {
     let exit_code = loop {
         assert!(cnt < 3000, "too long time");
 
-        nes.exec_frame(&input);
+        nes.exec_frame();
 
         let stat = nes.mem.borrow().read(0x6000);
         if !starting && stat < 0x80 {
