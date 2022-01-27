@@ -1,11 +1,12 @@
 use anyhow::{anyhow, Result};
 use sdl2::{
     audio::{AudioQueue, AudioSpecDesired},
+    controller::{self, GameController},
     event::Event,
-    keyboard::Keycode,
+    keyboard::{self, Keycode},
     pixels::{Color, PixelFormatEnum},
     rect::Rect,
-    EventPump,
+    EventPump, GameControllerSubsystem, Sdl,
 };
 use std::{collections::VecDeque, path::PathBuf, time::Duration};
 
@@ -43,7 +44,7 @@ fn main(file: PathBuf) -> Result<()> {
         .window("sabicom", screen_width, screen_height)
         .build()?;
 
-    let mut canvas = window.into_canvas().build()?;
+    let mut canvas = window.into_canvas().present_vsync().build()?;
     let texture_creator = canvas.texture_creator();
 
     canvas.set_draw_color(Color::RGB(0, 0, 0));
@@ -58,12 +59,6 @@ fn main(file: PathBuf) -> Result<()> {
     let mut surface = sdl2::surface::Surface::new(width as _, height as _, PixelFormatEnum::RGB24)
         .map_err(|e| anyhow!("{e}"))?;
 
-    let game_controller_subsystem = sdl_context.game_controller().map_err(|e| anyhow!("{e}"))?;
-
-    dbg!(game_controller_subsystem.num_joysticks().unwrap());
-
-    return Ok(());
-
     let audio_subsystem = sdl_context.audio().map_err(|e| anyhow!("{e}"))?;
     let desired_spec = AudioSpecDesired {
         freq: Some(48000),
@@ -76,13 +71,15 @@ fn main(file: PathBuf) -> Result<()> {
     device.queue(&vec![0; 2048]);
     device.resume();
 
+    let input_manager = InputManager::new(&sdl_context, KeyConfig::default())?;
+
     let mut event_pump = sdl_context.event_pump().map_err(|e| anyhow!("{e}"))?;
 
     let mut timer = Timer::new();
     let mut audio_filter = AudioFilter::new();
 
     while process_events(&mut event_pump) {
-        let input = get_input(&event_pump);
+        let input = input_manager.get_input(&event_pump);
 
         nes.exec_frame(&input);
 
@@ -162,27 +159,159 @@ fn process_events(event_pump: &mut EventPump) -> bool {
     true
 }
 
-fn get_input(e: &EventPump) -> Input {
-    use sdl2::keyboard::{KeyboardState, Scancode};
+struct InputManager {
+    key_config: KeyConfig,
+    gcs: GameControllerSubsystem,
+    controllers: Vec<GameController>,
+}
 
-    let kbstate = KeyboardState::new(e);
+struct KeyConfig {
+    up: Vec<Key>,
+    down: Vec<Key>,
+    left: Vec<Key>,
+    right: Vec<Key>,
+    a: Vec<Key>,
+    b: Vec<Key>,
+    start: Vec<Key>,
+    select: Vec<Key>,
+}
 
-    let pad1 = Pad {
-        up: kbstate.is_scancode_pressed(Scancode::Up),
-        down: kbstate.is_scancode_pressed(Scancode::Down),
-        left: kbstate.is_scancode_pressed(Scancode::Left),
-        right: kbstate.is_scancode_pressed(Scancode::Right),
-        a: kbstate.is_scancode_pressed(Scancode::Z),
-        b: kbstate.is_scancode_pressed(Scancode::X),
-        start: kbstate.is_scancode_pressed(Scancode::Return),
-        select: kbstate.is_scancode_pressed(Scancode::RShift),
-    };
+enum Key {
+    Keyboard {
+        scancode: keyboard::Scancode,
+    },
+    GameController {
+        id: usize,
+        button: controller::Button,
+    },
+}
 
-    let pad2 = Pad::default();
+impl Default for KeyConfig {
+    fn default() -> Self {
+        use sdl2::keyboard::Scancode;
 
-    let pad = [pad1, pad2];
+        Self {
+            up: vec![
+                Key::Keyboard {
+                    scancode: Scancode::Up,
+                },
+                Key::GameController {
+                    id: 0,
+                    button: controller::Button::DPadUp,
+                },
+            ],
+            down: vec![
+                Key::Keyboard {
+                    scancode: Scancode::Down,
+                },
+                Key::GameController {
+                    id: 0,
+                    button: controller::Button::DPadDown,
+                },
+            ],
+            left: vec![
+                Key::Keyboard {
+                    scancode: Scancode::Left,
+                },
+                Key::GameController {
+                    id: 0,
+                    button: controller::Button::DPadLeft,
+                },
+            ],
+            right: vec![
+                Key::Keyboard {
+                    scancode: Scancode::Right,
+                },
+                Key::GameController {
+                    id: 0,
+                    button: controller::Button::DPadRight,
+                },
+            ],
+            a: vec![
+                Key::Keyboard {
+                    scancode: Scancode::Z,
+                },
+                Key::GameController {
+                    id: 0,
+                    button: controller::Button::A,
+                },
+            ],
+            b: vec![
+                Key::Keyboard {
+                    scancode: Scancode::X,
+                },
+                Key::GameController {
+                    id: 0,
+                    button: controller::Button::X,
+                },
+            ],
+            start: vec![
+                Key::Keyboard {
+                    scancode: Scancode::Return,
+                },
+                Key::GameController {
+                    id: 0,
+                    button: controller::Button::Start,
+                },
+            ],
+            select: vec![
+                Key::Keyboard {
+                    scancode: Scancode::Backspace,
+                },
+                Key::GameController {
+                    id: 0,
+                    button: controller::Button::Back,
+                },
+            ],
+        }
+    }
+}
 
-    Input { pad }
+impl InputManager {
+    fn new(sdl: &Sdl, key_config: KeyConfig) -> Result<Self> {
+        let gcs = sdl.game_controller().map_err(|e| anyhow!("{e}"))?;
+
+        let controllers = (0..(gcs.num_joysticks().map_err(|e| anyhow!("{e}"))?))
+            .map(|id| gcs.open(id))
+            .collect::<Result<Vec<_>, _>>()?;
+
+        Ok(Self {
+            key_config,
+            gcs,
+            controllers,
+        })
+    }
+
+    fn get_input(&self, e: &EventPump) -> Input {
+        let kbstate = keyboard::KeyboardState::new(e);
+
+        let pressed = |keys: &Vec<Key>| {
+            keys.iter().any(|k| match k {
+                Key::Keyboard { scancode } => kbstate.is_scancode_pressed(*scancode),
+                Key::GameController { id, button } => self
+                    .controllers
+                    .get(*id)
+                    .map_or(false, |r| r.button(*button)),
+            })
+        };
+
+        let pad1 = Pad {
+            up: pressed(&self.key_config.up),
+            down: pressed(&self.key_config.down),
+            left: pressed(&self.key_config.left),
+            right: pressed(&self.key_config.right),
+            a: pressed(&self.key_config.a),
+            b: pressed(&self.key_config.b),
+            start: pressed(&self.key_config.start),
+            select: pressed(&self.key_config.select),
+        };
+
+        let pad2 = Pad::default();
+
+        let pad = [pad1, pad2];
+
+        Input { pad }
+    }
 }
 
 use std::time::SystemTime;

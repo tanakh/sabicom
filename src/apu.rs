@@ -536,7 +536,7 @@ impl Apu {
 
             _ => {
                 log::warn!("Read APU ${addr:04X}");
-                0xA0
+                0
             }
         };
         log::trace!("Read APU ${addr:04X} = {ret:02X}");
