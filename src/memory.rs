@@ -11,6 +11,7 @@ pub struct MemoryMap {
     ppu: Ref<Ppu>,
     apu: Ref<Apu>,
     mapper: Ref<dyn Mapper>,
+    pub cpu_stall: u64,
 }
 
 impl MemoryMap {
@@ -20,6 +21,7 @@ impl MemoryMap {
             ppu,
             apu,
             mapper,
+            cpu_stall: 0,
         }
     }
 
@@ -48,7 +50,8 @@ impl MemoryMap {
                     self.write(0x2004, b);
                 }
 
-                // TODO: suspend cpu for 513 cycles
+                // FIXME: odd frame stall one more cycle
+                self.cpu_stall += 513
             }
         }
     }

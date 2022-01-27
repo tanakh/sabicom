@@ -2,7 +2,7 @@ use crate::{
     apu::Apu,
     consts::*,
     cpu::{self, Cpu},
-    mapper::create_mapper,
+    mapper::{create_mapper, Mapper},
     memory::MemoryMap,
     ppu::{self, Ppu},
     rom::Rom,
@@ -14,6 +14,7 @@ pub struct Nes {
     ppu: Ref<Ppu>,
     apu: Ref<Apu>,
     pub mem: Ref<MemoryMap>,
+    mapper: Ref<dyn Mapper>,
     rom: Ref<Rom>,
     frame_buf: FrameBuffer,
     audio_buf: Vec<i16>,
@@ -26,6 +27,7 @@ struct Wires {
     rst_wire: Wire<bool>,
     apu_frame_irq_wire: Wire<bool>,
     apu_dmc_irq_wire: Wire<bool>,
+    mapper_irq_wire: Wire<bool>,
     cpu_irq_wire: Wire<bool>,
 }
 
@@ -36,8 +38,15 @@ impl Wires {
             rst_wire: Wire::new(false),
             apu_frame_irq_wire: Wire::new(false),
             apu_dmc_irq_wire: Wire::new(false),
+            mapper_irq_wire: Wire::new(false),
             cpu_irq_wire: Wire::new(false),
         }
+    }
+    fn sync(&self) {
+        let irq = self.apu_frame_irq_wire.get()
+            || self.apu_dmc_irq_wire.get()
+            || self.mapper_irq_wire.get();
+        self.cpu_irq_wire.set(irq);
     }
 }
 
@@ -46,9 +55,9 @@ pub struct State {}
 impl Nes {
     pub fn new(rom: Rom, _sram: Option<Vec<u8>>) -> Self {
         let rom = wrap_ref(rom);
-        let mapper = create_mapper(clone_ref(&rom));
-
         let wires = Wires::new();
+
+        let mapper = create_mapper(clone_ref(&rom), wires.mapper_irq_wire.clone());
 
         // FIXME: irq wire connect to or gate
 
@@ -64,7 +73,11 @@ impl Nes {
             wires.apu_dmc_irq_wire.clone(),
         ));
 
-        let mem = wrap_ref(MemoryMap::new(clone_ref(&ppu), clone_ref(&apu), mapper));
+        let mem = wrap_ref(MemoryMap::new(
+            clone_ref(&ppu),
+            clone_ref(&apu),
+            clone_ref(&mapper),
+        ));
         let cpu = Cpu::new(
             clone_ref(&mem),
             cpu::Wires {
@@ -82,6 +95,7 @@ impl Nes {
             apu,
             cpu,
             mem,
+            mapper,
             frame_buf,
             audio_buf: vec![],
             counter: 0,
@@ -101,13 +115,12 @@ impl Nes {
             if self.counter > PPU_CLOCK_PER_CPU_CLOCK {
                 self.counter -= PPU_CLOCK_PER_CPU_CLOCK;
 
-                let irq = self.wires.apu_frame_irq_wire.get() || self.wires.apu_dmc_irq_wire.get();
-                self.wires.cpu_irq_wire.set(irq);
-
+                self.wires.sync();
                 self.cpu.tick();
                 self.apu.borrow_mut().tick();
             }
             self.ppu.borrow_mut().tick();
+            self.mapper.borrow_mut().tick();
         }
 
         self.frame_buf

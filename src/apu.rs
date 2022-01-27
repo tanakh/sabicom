@@ -48,12 +48,13 @@ impl Register {
     fn new() -> Self {
         Register {
             noise: Noise::new(),
+            dmc: Dmc::new(),
             ..Default::default()
         }
     }
 }
 
-#[derive(Default)]
+#[derive(Default, Debug)]
 struct Pulse {
     enable: bool,
     duty: u8,
@@ -92,7 +93,7 @@ struct Triangle {
     sequencer_counter: u16,
 }
 
-#[derive(Default)]
+#[derive(Default, Debug)]
 struct Noise {
     enable: bool,
     length_counter_halt: bool,
@@ -136,6 +137,15 @@ struct Dmc {
     buffer: Option<u8>,
     silence: bool,
     output_level: u8,
+}
+
+impl Dmc {
+    fn new() -> Self {
+        Dmc {
+            shiftreg_remain: 8,
+            ..Default::default()
+        }
+    }
 }
 
 impl Apu {
@@ -423,7 +433,7 @@ impl Apu {
                 r.decay_level
             };
             let target_period = self.target_period(ch);
-            let sweep_muting = target_period < 8 || target_period > 0x7ff;
+            let sweep_muting = r.sweep_enabled && (target_period < 8 || target_period > 0x7ff);
             if !(r.length_counter == 0 || sweep_muting || r.timer < 8) {
                 pulse[ch] = volume * PULSE_WAVEFORM[r.duty as usize][r.phase as usize];
             }
@@ -546,6 +556,14 @@ impl Apu {
                 r.length_counter_halt = v[5];
                 r.constant_volume = v[4];
                 r.volume = v[0..4].load();
+
+                log::trace!(
+                    "Pulse #{ch}: duty={}, inflen={}, constvol={}, vol={}",
+                    r.duty,
+                    r.length_counter_halt,
+                    r.constant_volume,
+                    r.volume
+                );
             }
             0x4001 | 0x4005 => {
                 let ch = (addr - 0x4000) / 4;
@@ -556,11 +574,22 @@ impl Apu {
                 r.sweep_negate = v[3];
                 r.sweep_shift = v[0..3].load();
                 r.sweep_reload = true;
+
+                log::trace!(
+                    "Pulse #{ch}: swenable={}, swperiod={}, swneg={}, swshft={}, swreload={}",
+                    r.sweep_enabled,
+                    r.sweep_period,
+                    r.sweep_negate,
+                    r.sweep_shift,
+                    r.sweep_reload
+                );
             }
             0x4002 | 0x4006 => {
                 let ch = (addr - 0x4000) / 4;
                 let r = &mut self.reg.pulse[ch as usize];
                 r.timer.view_bits_mut::<Lsb0>()[0..8].store(data);
+
+                log::trace!("Pulse #{ch}: timer_low={}, timer={}", data, r.timer);
             }
             0x4003 | 0x4007 => {
                 let ch = (addr - 0x4000) / 4;
@@ -575,6 +604,14 @@ impl Apu {
                 }
                 r.envelope_start = true;
                 r.phase = 0;
+
+                log::trace!(
+                    "Pulse #{ch}: timer_high={}, timer={}, length={}, enabled={}",
+                    v[0..3].load::<u8>(),
+                    r.timer,
+                    r.length_counter_load,
+                    r.enable,
+                );
             }
 
             // Triangle
@@ -626,6 +663,7 @@ impl Apu {
                 if r.enable {
                     r.length_counter = LENGTH_TABLE[r.length_counter_load as usize];
                 }
+                r.envelope_start = true;
             }
 
             // DMC

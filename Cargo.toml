@@ -8,6 +8,7 @@ edition = "2021"
 [dependencies]
 anyhow = "1.0.52"
 argopt = "0.2.0"
+biquad = "0.4.2"
 bitvec = "1.0.0"
 bytesize = "1.1.0"
 chrono = "0.4.19"

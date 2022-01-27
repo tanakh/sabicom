@@ -252,7 +252,7 @@ macro_rules! instructions {
             0x90: BCC REL, 0x91: STA INY, 0x92: UNK UNK, 0x93: UNK UNK,
             0x94: STY ZPX, 0x95: STA ZPX, 0x96: STX ZPY, 0x97:*SAX ZPY,
             0x98: TYA IMP, 0x99: STA ABY, 0x9A: TXS IMP, 0x9B: UNK UNK,
-            0x9C: UNK UNK, 0x9D: STA ABX, 0x9E: UNK UNK, 0x9F: UNK UNK,
+            0x9C:*SYA ABX, 0x9D: STA ABX, 0x9E:*SXA ABY, 0x9F: UNK UNK,
             0xA0: LDY IMM, 0xA1: LDA INX, 0xA2: LDX IMM, 0xA3:*LAX INX,
             0xA4: LDY ZPG, 0xA5: LDA ZPG, 0xA6: LDX ZPG, 0xA7:*LAX ZPG,
             0xA8: TAY IMP, 0xA9: LDA IMM, 0xAA: TAX IMP, 0xAB:*ATX IMM,
@@ -283,6 +283,13 @@ macro_rules! instructions {
 
 impl Cpu {
     pub fn tick(&mut self) {
+        {
+            if self.mem.borrow().cpu_stall > 0 {
+                self.counter += self.mem.borrow().cpu_stall;
+                self.mem.borrow_mut().cpu_stall = 0;
+            }
+        }
+
         self.world += 1;
 
         while self.counter < self.world {
@@ -310,6 +317,7 @@ impl Cpu {
     fn exec_one(&mut self) {
         self.trace();
 
+        let opaddr = self.reg.pc;
         let opc = self.fetch_u8();
 
         macro_rules! gen_code {
@@ -428,7 +436,7 @@ impl Cpu {
                 if !$read || tmp >= 0x100 {
                     let _ = self.read_u8(hi << 8 | tmp & 0xff);
                 }
-                addr + self.reg.y as u16
+                addr.wrapping_add(self.reg.y as u16)
             }};
             (REL, $read:ident) => {{
                 let rel = self.fetch_u8() as i8;
@@ -840,6 +848,18 @@ impl Cpu {
                 self.reg.flag.set_nz(self.reg.x);
                 self.reg.flag.c = t <= 0xff;
             }};
+            (SYA, $addr:ident) => {{
+                let t = self.reg.y & (($addr >> 8) + 1) as u8;
+                if self.reg.x as u16 + self.read_u8(opaddr.wrapping_add(1)) as u16 <= 0xff {
+                    self.write_u8($addr, t);
+                }
+            }};
+            (SXA, $addr:ident) => {{
+                let t = self.reg.x & (($addr >> 8) + 1) as u8;
+                if self.reg.y as u16 + self.read_u8(opaddr.wrapping_add(1)) as u16 <= 0xff {
+                    self.write_u8($addr, t);
+                }
+            }};
 
             (UNK, $addr:ident) => {{
                 log::warn!("invalid opcode: ${opc:02X}");
@@ -932,7 +952,7 @@ impl Cpu {
             AddrMode::INY => {
                 let ind = self.mem.borrow().read((opr as u8) as u16) as u16
                     | (self.mem.borrow().read((opr as u8).wrapping_add(1) as u16) as u16) << 8;
-                let addr = ind + self.reg.y as u16;
+                let addr = ind.wrapping_add(self.reg.y as u16);
                 format!(" = {ind:04X} @ {addr:04X} = {}", read_u8(addr))
             }
 

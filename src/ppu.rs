@@ -125,6 +125,7 @@ impl Ppu {
         }
 
         if screen_visible
+            && SCREEN_RANGE.contains(&self.line)
             && self.counter < SCREEN_WIDTH as u64
             && self.sprite0_hit[self.counter as usize]
         {
@@ -158,6 +159,12 @@ impl Ppu {
             self.render_spr();
         }
 
+        if self.reg.bg_clip || self.reg.sprite_clip {
+            for i in 0..8 {
+                assert!(!self.sprite0_hit[i]);
+            }
+        }
+
         for x in 0..SCREEN_WIDTH {
             self.frame_buf
                 .set(x, self.line, NES_PALETTE[self.line_buf[x] as usize & 0x3f]);
@@ -168,6 +175,7 @@ impl Ppu {
         let x_ofs = self.reg.scroll_x as usize;
         let y_ofs = (self.reg.cur_addr >> 12) & 7;
         let pat_addr = if self.reg.bg_pat_addr { 0x1000 } else { 0x0000 };
+        let leftmost = if self.reg.bg_clip { 8 } else { 0 };
 
         let mut name_addr = self.reg.cur_addr & 0xfff;
 
@@ -192,7 +200,7 @@ impl Ppu {
 
             for lx in 0..8 {
                 let x = (i * 8 + lx + 8 - x_ofs) as usize;
-                if !(x >= 8 && x < SCREEN_WIDTH + 8) {
+                if !(x >= 8 + leftmost && x < SCREEN_WIDTH + 8) {
                     continue;
                 }
 
@@ -213,10 +221,15 @@ impl Ppu {
     pub fn render_spr(&mut self) {
         let spr_height = if self.reg.sprite_size { 16 } else { 8 };
         let pat_addr = if self.reg.sprite_pat_addr { 0x1000 } else { 0 };
+        let leftmost = if self.reg.sprite_clip { 8 } else { 0 };
 
         for i in 0..64 {
             let r = &self.oam[i * 4..(i + 1) * 4];
             let spr_y = r[0] as usize + 1;
+
+            if i == 0 {
+                log::trace!("sprite {i}, y = {spr_y}, cur_line: {}", self.line);
+            }
 
             if !(spr_y..spr_y + spr_height).contains(&self.line) {
                 continue;
@@ -253,19 +266,19 @@ impl Ppu {
 
             for lx in 0..8 {
                 let x = spr_x + if h_flip { 7 - lx } else { lx };
-                if x >= SCREEN_WIDTH {
+                if !(x >= leftmost && x < SCREEN_WIDTH) {
                     continue;
                 }
 
                 let lo = (b0 >> lx) & 1 | ((b1 >> lx) & 1) << 1;
                 if lo != 0 && self.line_buf[x] & 0x80 == 0 {
+                    if i == 0 && x < 255 && self.line_buf[x] & 0x40 != 0 {
+                        self.sprite0_hit[x] = true;
+                    }
                     if !is_bg || self.line_buf[x] & 0x40 == 0 {
                         self.line_buf[x] = self.read_palette(0x10 | upper | lo);
                     }
                     self.line_buf[x] |= 0x80;
-                    if i == 0 {
-                        self.sprite0_hit[x] = true;
-                    }
                 }
             }
         }
@@ -386,16 +399,16 @@ impl Ppu {
                     b = if data[7] { "B" } else { "-" },
                     sprite_visible = if data[4] { "t" } else { "f" },
                     bg_visible = if data[3] { "t" } else { "f" },
-                    sprite_clip = if data[2] { "f" } else { "t" },
-                    bg_clip = if data[1] { "f" } else { "t" },
+                    sprite_clip = if data[2] { "t" } else { "f" },
+                    bg_clip = if data[1] { "t" } else { "f" },
                     greyscale = if data[0] { "t" } else { "f" },
                 );
 
                 self.reg.bg_color = data[5..8].load_le();
                 self.reg.sprite_visible = data[4];
                 self.reg.bg_visible = data[3];
-                self.reg.sprite_clip = data[2];
-                self.reg.bg_clip = data[1];
+                self.reg.sprite_clip = !data[2];
+                self.reg.bg_clip = !data[1];
                 self.reg.color_display = data[0];
             }
             2 => {
