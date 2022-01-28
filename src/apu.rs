@@ -341,7 +341,7 @@ impl Apu {
                 r.envelope_start = false;
                 r.decay_level = 15;
                 r.envelope_counter = r.volume;
-            } else if r.volume > 0 {
+            } else {
                 if r.envelope_counter == 0 {
                     r.envelope_counter = r.volume;
                     if r.decay_level != 0 {
@@ -406,6 +406,13 @@ impl Apu {
             } else {
                 r.sweep_counter -= 1;
             }
+
+            if ch == 0 {
+                eprintln!(
+                    "length-counter: {}, volume: {:2}, decay-level: {:2}, envelope: {}",
+                    r.length_counter, r.volume, r.decay_level, !r.constant_volume
+                );
+            }
         }
         if self.reg.triangle.length_counter > 0 && !self.reg.triangle.length_counter_halt {
             self.reg.triangle.length_counter -= 1;
@@ -427,6 +434,7 @@ impl Apu {
 
         for ch in 0..2 {
             let r = &self.reg.pulse[ch];
+
             let volume = if r.constant_volume {
                 r.volume
             } else {

@@ -6,7 +6,7 @@ use sdl2::{
     keyboard::{self, Keycode},
     pixels::{Color, PixelFormatEnum},
     rect::Rect,
-    EventPump, GameControllerSubsystem, Sdl,
+    EventPump, Sdl,
 };
 use std::{collections::VecDeque, path::PathBuf, time::Duration};
 

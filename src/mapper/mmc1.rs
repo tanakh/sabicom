@@ -137,12 +137,17 @@ impl super::Mapper for Mmc1 {
                 }
                 PrgRomBankMode::Switch16KLow => {
                     let page = cmd as usize & 0x0f;
+                    let prg_pages = self.ctrl.prg_pages();
                     for i in 0..2 {
                         self.ctrl.map_prg(i, page * 2 + i);
                     }
+                    self.ctrl.map_prg(2, prg_pages - 2);
+                    self.ctrl.map_prg(3, prg_pages - 1);
                 }
                 PrgRomBankMode::Switch16KHigh => {
                     let page = cmd as usize & 0x0f;
+                    self.ctrl.map_prg(0, 0);
+                    self.ctrl.map_prg(1, 1);
                     for i in 0..2 {
                         self.ctrl.map_prg(i + 2, page * 2 + i);
                     }

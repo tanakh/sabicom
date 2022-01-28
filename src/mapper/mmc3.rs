@@ -1,5 +1,5 @@
 use crate::{
-    consts::{LINES_PER_FRAME, PPU_CLOCK_PER_LINE, SCREEN_RANGE},
+    consts::{LINES_PER_FRAME, PPU_CLOCK_PER_LINE, PRE_RENDER_LINE, SCREEN_RANGE},
     memory::MemoryController,
     rom::{Mirroring, Rom},
     util::{Ref, Wire},
@@ -136,7 +136,10 @@ impl super::Mapper for Mmc3 {
     }
 
     fn tick(&mut self) {
-        if self.irq_enable && self.ppu_line < 239 && self.ppu_cycle == 260 {
+        if self.irq_enable
+            && self.ppu_line < SCREEN_RANGE.end as u64 - 1
+            && self.ppu_cycle == PRE_RENDER_LINE as u64
+        {
             if self.irq_counter == 0 {
                 self.irq_counter = self.irq_latch;
             } else {

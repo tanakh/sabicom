@@ -56,7 +56,7 @@ impl Rom {
 
         let magic = &header[0..4];
         if magic != b"NES\x1a" {
-            bail!("Not a valid NES ROM");
+            bail!("Not a valid NES ROM file");
         }
 
         let is_nes2 = header[7] & 0x0C == 0x08;

@@ -1,5 +1,5 @@
 use crate::{
-    consts::{PPU_CLOCK_PER_FRAME, PPU_CLOCK_PER_LINE},
+    consts::{LINES_PER_FRAME, PPU_CLOCK_PER_LINE},
     memory::MemoryMap,
     util::{Ref, Wire},
 };
@@ -130,25 +130,25 @@ impl Cpu {
 
         self.push_u16(self.reg.pc);
         self.push_u8(self.reg.flag.get_u8(if brk { 3 } else { 2 }));
-        self.reg.pc = self.read_u8(vect) as u16 | (self.read_u8(vect + 1) as u16) << 8;
+        self.reg.pc = self.read(vect) as u16 | (self.read(vect + 1) as u16) << 8;
         self.reg.flag.i = true;
     }
 
-    fn read_u8(&mut self, addr: u16) -> u8 {
+    fn read(&mut self, addr: u16) -> u8 {
         let ret = self.mem.borrow().read(addr);
         self.tick_bus();
         log::trace!(target: "prgmem", "[${addr:04X}] -> ${ret:02X}");
         ret
     }
 
-    fn write_u8(&mut self, addr: u16, data: u8) {
+    fn write(&mut self, addr: u16, data: u8) {
         self.mem.borrow_mut().write(addr, data);
         self.tick_bus();
         log::trace!(target: "prgmem", "[${addr:04X}] <- ${data:02X}");
     }
 
     fn fetch_u8(&mut self) -> u8 {
-        let ret = self.read_u8(self.reg.pc);
+        let ret = self.read(self.reg.pc);
         self.reg.pc = self.reg.pc.wrapping_add(1);
         ret
     }
@@ -160,7 +160,7 @@ impl Cpu {
     }
 
     fn push_u8(&mut self, data: u8) {
-        self.write_u8(0x100 + self.reg.s as u16, data);
+        self.write(0x100 + self.reg.s as u16, data);
         self.reg.s = self.reg.s.wrapping_sub(1);
     }
 
@@ -171,7 +171,7 @@ impl Cpu {
 
     fn pop_u8(&mut self) -> u8 {
         self.reg.s = self.reg.s.wrapping_add(1);
-        self.read_u8(0x100 + self.reg.s as u16)
+        self.read(0x100 + self.reg.s as u16)
     }
 
     fn pop_u16(&mut self) -> u16 {
@@ -181,6 +181,7 @@ impl Cpu {
     }
 }
 
+#[allow(clippy::upper_case_acronyms)]
 enum AddrMode {
     IMP, // Implicit
     ACC, // Accumulator
@@ -366,11 +367,11 @@ impl Cpu {
                 exec!($mne $mode)
             };
             ($mne:ident IMP) => {{
-                let _ = self.read_u8(self.reg.pc);
+                let _ = self.read(self.reg.pc);
                 exec_op!($mne)
             }};
             ($mne:ident ACC) => {{
-                let _ = self.read_u8(self.reg.pc);
+                let _ = self.read(self.reg.pc);
                 exec_op!($mne, ACC)
             }};
 
@@ -403,44 +404,44 @@ impl Cpu {
                 let addr = self.fetch_u16();
                 let tmp = (addr & 0xff) + self.reg.$reg as u16;
                 if !$read || tmp >= 0x100 {
-                    let _ = self.read_u8(addr & 0xff00 | tmp & 0xff);
+                    let _ = self.read(addr & 0xff00 | tmp & 0xff);
                 }
                 addr.wrapping_add(self.reg.$reg as u16)
             }};
             (IND, $read:ident) => {{
                 let lo = self.fetch_u16();
                 let hi = (lo & 0xff00) | (lo as u8).wrapping_add(1) as u16;
-                self.read_u8(lo) as u16 | (self.read_u8(hi) as u16) << 8
+                self.read(lo) as u16 | (self.read(hi) as u16) << 8
             }};
             (ZPG, $read:ident) => {{
                 self.fetch_u8() as u16
             }};
             (ZPX, $read:ident) => {{
                 let addr = self.fetch_u8();
-                self.read_u8(addr as u16);
+                self.read(addr as u16);
                 addr.wrapping_add(self.reg.x) as u16
             }};
             (ZPY, $read:ident) => {{
                 let addr = self.fetch_u8();
-                self.read_u8(addr as u16);
+                self.read(addr as u16);
                 addr.wrapping_add(self.reg.y) as u16
             }};
             (INX, $read:ident) => {{
                 let a = self.fetch_u8();
-                let _ = self.read_u8(a as u16);
+                let _ = self.read(a as u16);
                 let a = a.wrapping_add(self.reg.x);
-                let lo = self.read_u8(a as u16);
-                let hi = self.read_u8(a.wrapping_add(1) as u16);
+                let lo = self.read(a as u16);
+                let hi = self.read(a.wrapping_add(1) as u16);
                 lo as u16 | (hi as u16) << 8
             }};
             (INY, $read:ident) => {{
                 let a = self.fetch_u8();
-                let lo = self.read_u8(a as u16) as u16;
-                let hi = self.read_u8(a.wrapping_add(1) as u16) as u16;
+                let lo = self.read(a as u16) as u16;
+                let hi = self.read(a.wrapping_add(1) as u16) as u16;
                 let addr = (lo | hi << 8);
                 let tmp = lo + self.reg.y as u16;
                 if !$read || tmp >= 0x100 {
-                    let _ = self.read_u8(hi << 8 | tmp & 0xff);
+                    let _ = self.read(hi << 8 | tmp & 0xff);
                 }
                 addr.wrapping_add(self.reg.y as u16)
             }};
@@ -454,7 +455,7 @@ impl Cpu {
         macro_rules! exec_op {
             (ADC, $addr:ident) => {{
                 let a = self.reg.a as u16;
-                let b = self.read_u8($addr) as u16;
+                let b = self.read($addr) as u16;
                 let c = self.reg.flag.c as u16;
                 let r = a.wrapping_add(b).wrapping_add(c);
                 self.reg.flag.c = r > 0xff;
@@ -464,7 +465,7 @@ impl Cpu {
             }};
             (SBC, $addr:ident) => {{
                 let a = self.reg.a as u16;
-                let b = self.read_u8($addr) as u16;
+                let b = self.read($addr) as u16;
                 let c = self.reg.flag.c as u16;
                 let r = a.wrapping_sub(b).wrapping_sub(1 - c);
                 self.reg.flag.c = r <= 0xff;
@@ -473,19 +474,19 @@ impl Cpu {
                 self.reg.flag.set_nz(self.reg.a);
             }};
             (AND, $addr:ident) => {{
-                self.reg.a &= self.read_u8($addr);
+                self.reg.a &= self.read($addr);
                 self.reg.flag.set_nz(self.reg.a);
             }};
             (ORA, $addr:ident) => {{
-                self.reg.a |= self.read_u8($addr);
+                self.reg.a |= self.read($addr);
                 self.reg.flag.set_nz(self.reg.a);
             }};
             (EOR, $addr:ident) => {{
-                self.reg.a ^= self.read_u8($addr);
+                self.reg.a ^= self.read($addr);
                 self.reg.flag.set_nz(self.reg.a);
             }};
             (BIT, $addr:ident) => {{
-                let r = self.read_u8($addr);
+                let r = self.read($addr);
                 self.reg.flag.v = r & 0x40 != 0;
                 self.reg.flag.n = r & 0x80 != 0;
                 self.reg.flag.z = (self.reg.a & r) == 0;
@@ -493,7 +494,7 @@ impl Cpu {
 
             (cmp, $reg:ident, $addr:ident) => {{
                 let a = self.reg.$reg as u16;
-                let b = self.read_u8($addr) as u16;
+                let b = self.read($addr) as u16;
                 let r = a.wrapping_sub(b);
                 self.reg.flag.c = r <= 0xff;
                 self.reg.flag.set_nz(r as u8);
@@ -509,7 +510,7 @@ impl Cpu {
             }};
 
             (ld, $reg:ident, $addr:ident) => {{
-                self.reg.$reg = self.read_u8($addr);
+                self.reg.$reg = self.read($addr);
                 self.reg.flag.set_nz(self.reg.$reg);
             }};
             (LDA, $addr:ident) => {{
@@ -523,7 +524,7 @@ impl Cpu {
             }};
 
             (st, $reg:ident, $addr:ident) => {{
-                self.write_u8($addr, self.reg.$reg);
+                self.write($addr, self.reg.$reg);
             }};
             (STA, $addr:ident) => {{
                 exec_op!(st, a, $addr)
@@ -562,10 +563,10 @@ impl Cpu {
             }};
 
             (rmw, $op:ident, $addr:ident) => {{
-                let mut a = self.read_u8($addr);
-                self.write_u8($addr, a);
+                let mut a = self.read($addr);
+                self.write($addr, a);
                 exec_op!($op, a);
-                self.write_u8($addr, a);
+                self.write($addr, a);
             }};
 
             (asl, $var:expr) => {{
@@ -646,18 +647,18 @@ impl Cpu {
                 self.reg.pc = $addr;
             }};
             (JSR, $addr:ident) => {{
-                let _ = self.read_u8(self.reg.s as u16 | 0x100);
+                let _ = self.read(self.reg.s as u16 | 0x100);
                 self.push_u16(self.reg.pc.wrapping_sub(1));
                 self.reg.pc = $addr;
             }};
             (RTS) => {{
-                let _ = self.read_u8(self.reg.s as u16 | 0x100);
+                let _ = self.read(self.reg.s as u16 | 0x100);
                 let pc = self.pop_u16();
-                let _ = self.read_u8(pc);
+                let _ = self.read(pc);
                 self.reg.pc = pc.wrapping_add(1);
             }};
             (RTI) => {{
-                let _ = self.read_u8(self.reg.s as u16 | 0x100);
+                let _ = self.read(self.reg.s as u16 | 0x100);
                 let p = self.pop_u8();
                 self.reg.flag.set_u8(p);
                 // Flag set by RTI affects interrupts
@@ -667,9 +668,9 @@ impl Cpu {
 
             (bra, $cond:ident, $val:expr, $addr:ident) => {{
                 if self.reg.flag.$cond == $val {
-                    let _ = self.read_u8(self.reg.pc);
+                    let _ = self.read(self.reg.pc);
                     if self.reg.pc & 0xff00 != $addr & 0xff00 {
-                        self.read_u8(self.reg.pc & 0xff00 | $addr & 0xff);
+                        self.read(self.reg.pc & 0xff00 | $addr & 0xff);
                     }
                     self.reg.pc = $addr;
                 }
@@ -728,12 +729,12 @@ impl Cpu {
                 self.push_u8(self.reg.flag.get_u8(3));
             }};
             (PLA) => {{
-                let _ = self.read_u8(self.reg.s as u16 | 0x100);
+                let _ = self.read(self.reg.s as u16 | 0x100);
                 self.reg.a = self.pop_u8();
                 self.reg.flag.set_nz(self.reg.a);
             }};
             (PLP) => {{
-                let _ = self.read_u8(self.reg.s as u16 | 0x100);
+                let _ = self.read(self.reg.s as u16 | 0x100);
                 let p = self.pop_u8();
                 self.reg.flag.set_u8(p);
             }};
@@ -741,37 +742,39 @@ impl Cpu {
             (BRK) => {{
                 self.reg.pc = self.reg.pc.wrapping_add(1);
                 self.exec_interrupt(Interrupt::Irq, true);
+                // Interrupt after BRK did not happen
+                self.i_flag_prev = self.reg.flag.i;
             }};
 
             (NOP) => {{}};
 
             // Undocumented
             (NOP, $addr:ident) => {{
-                let _ = self.read_u8($addr);
+                let _ = self.read($addr);
             }};
 
             (LAX, $addr:ident) => {{
-                self.reg.a = self.read_u8($addr);
+                self.reg.a = self.read($addr);
                 self.reg.x = self.reg.a;
                 self.reg.flag.set_nz(self.reg.a);
             }};
             (SAX, $addr:ident) => {{
-                self.write_u8($addr, self.reg.a & self.reg.x);
+                self.write($addr, self.reg.a & self.reg.x);
             }};
             (DCP, $addr:ident) => {{
-                let b = self.read_u8($addr);
-                self.write_u8($addr, b);
+                let b = self.read($addr);
+                self.write($addr, b);
                 let b = b.wrapping_sub(1);
-                self.write_u8($addr, b);
+                self.write($addr, b);
                 let r = (self.reg.a as u16).wrapping_sub(b as u16);
                 self.reg.flag.c = r <= 0xff;
                 self.reg.flag.set_nz(r as u8);
             }};
             (ISB, $addr:ident) => {{
-                let b = self.read_u8($addr);
-                self.write_u8($addr, b);
+                let b = self.read($addr);
+                self.write($addr, b);
                 let b = b.wrapping_add(1);
-                self.write_u8($addr, b);
+                self.write($addr, b);
                 let a = self.reg.a as u16;
                 let b = b as u16;
                 let c = self.reg.flag.c as u16;
@@ -782,40 +785,40 @@ impl Cpu {
                 self.reg.flag.set_nz(self.reg.a);
             }};
             (SLO, $addr:ident) => {{
-                let b = self.read_u8($addr);
-                self.write_u8($addr, b);
+                let b = self.read($addr);
+                self.write($addr, b);
                 self.reg.flag.c = b >> 7 != 0;
                 let b = b << 1;
                 self.reg.a |= b;
-                self.write_u8($addr, b);
+                self.write($addr, b);
                 self.reg.flag.set_nz(self.reg.a);
             }};
             (RLA, $addr:ident) => {{
-                let b = self.read_u8($addr);
-                self.write_u8($addr, b);
+                let b = self.read($addr);
+                self.write($addr, b);
                 let c = self.reg.flag.c;
                 self.reg.flag.c = b >> 7 != 0;
                 let b = (b << 1) | c as u8;
-                self.write_u8($addr, b);
+                self.write($addr, b);
                 self.reg.a &= b;
                 self.reg.flag.set_nz(self.reg.a);
             }};
             (SRE, $addr:ident) => {{
-                let b = self.read_u8($addr);
-                self.write_u8($addr, b);
+                let b = self.read($addr);
+                self.write($addr, b);
                 self.reg.flag.c = b & 1 != 0;
                 let b = b >> 1;
-                self.write_u8($addr, b);
+                self.write($addr, b);
                 self.reg.a ^= b;
                 self.reg.flag.set_nz(self.reg.a);
             }};
             (RRA, $addr:ident) => {{
-                let b = self.read_u8($addr);
-                self.write_u8($addr, b);
+                let b = self.read($addr);
+                self.write($addr, b);
                 let c = self.reg.flag.c as u8;
                 self.reg.flag.c = b & 1 != 0;
                 let b = (b >> 1) | (c << 7);
-                self.write_u8($addr, b);
+                self.write($addr, b);
                 let a = self.reg.a as u16;
                 let b = b as u16;
                 let c = self.reg.flag.c as u16;
@@ -826,44 +829,44 @@ impl Cpu {
                 self.reg.flag.set_nz(self.reg.a);
             }};
             (AAC, $addr:ident) => {{
-                self.reg.a &= self.read_u8($addr);
+                self.reg.a &= self.read($addr);
                 self.reg.flag.set_nz(self.reg.a);
                 self.reg.flag.c = self.reg.flag.n;
             }};
             (ASR, $addr:ident) => {{
-                self.reg.a &= self.read_u8($addr);
+                self.reg.a &= self.read($addr);
                 self.reg.flag.c = self.reg.a & 1 != 0;
                 self.reg.a >>= 1;
                 self.reg.flag.set_nz(self.reg.a);
             }};
             (ARR, $addr:ident) => {{
-                self.reg.a &= self.read_u8($addr);
+                self.reg.a &= self.read($addr);
                 self.reg.a = (self.reg.a >> 1) | (self.reg.flag.c as u8) << 7;
                 self.reg.flag.set_nz(self.reg.a);
                 self.reg.flag.c = (self.reg.a >> 6) & 1 != 0;
                 self.reg.flag.v = ((self.reg.a >> 5) & 1 != 0) != self.reg.flag.c;
             }};
             (ATX, $addr:ident) => {{
-                self.reg.a = self.read_u8($addr);
+                self.reg.a = self.read($addr);
                 self.reg.x = self.reg.a;
                 self.reg.flag.set_nz(self.reg.a);
             }};
             (AXS, $addr:ident) => {{
-                let t = ((self.reg.x & self.reg.a) as u16).wrapping_sub(self.read_u8($addr) as u16);
+                let t = ((self.reg.x & self.reg.a) as u16).wrapping_sub(self.read($addr) as u16);
                 self.reg.x = t as u8;
                 self.reg.flag.set_nz(self.reg.x);
                 self.reg.flag.c = t <= 0xff;
             }};
             (SYA, $addr:ident) => {{
                 let t = self.reg.y & (($addr >> 8) + 1) as u8;
-                if self.reg.x as u16 + self.read_u8(opaddr.wrapping_add(1)) as u16 <= 0xff {
-                    self.write_u8($addr, t);
+                if self.reg.x as u16 + self.read(opaddr.wrapping_add(1)) as u16 <= 0xff {
+                    self.write($addr, t);
                 }
             }};
             (SXA, $addr:ident) => {{
                 let t = self.reg.x & (($addr >> 8) + 1) as u8;
-                if self.reg.y as u16 + self.read_u8(opaddr.wrapping_add(1)) as u16 <= 0xff {
-                    self.write_u8($addr, t);
+                if self.reg.y as u16 + self.read(opaddr.wrapping_add(1)) as u16 <= 0xff {
+                    self.write($addr, t);
                 }
             }};
 
@@ -877,7 +880,7 @@ impl Cpu {
 
     fn trace(&self) {
         if !log::log_enabled!(target: "disasm", log::Level::Trace)
-            && !log::log_enabled!(target: "disasm-nestest", log::Level::Trace)
+            && !log::log_enabled!(target: "disasnt", log::Level::Trace)
         {
             return;
         }
@@ -887,10 +890,14 @@ impl Cpu {
         let opr =
             self.mem.borrow().read(pc + 1) as u16 | (self.mem.borrow().read(pc + 2) as u16) << 8;
 
+        let ppu_cycle = self.counter * 3;
+        let line = ppu_cycle / PPU_CLOCK_PER_LINE % LINES_PER_FRAME as u64;
+        let col = ppu_cycle % PPU_CLOCK_PER_LINE;
+
         let asm = disasm(pc, opc, opr);
 
         log::trace!(target: "disasm",
-            "{pc:04X}: {asm:13} | A={a:02X} X={x:02X} Y={y:02X} S={s:02X} {n}{v}{d}{i}{z}{c}",
+            "{pc:04X}: {asm:13} | A:{a:02X} X:{x:02X} Y:{y:02X} S:{s:02X} P:{n}{v}{d}{i}{z}{c} PPU:{line:3},{col:3}",
             pc = self.reg.pc,
             a = self.reg.a,
             x = self.reg.x,
@@ -911,7 +918,7 @@ impl Cpu {
             _ => unreachable!(),
         };
 
-        let read_u8 = |addr: u16| {
+        let read = |addr: u16| {
             if addr < 0x2000 || addr >= 0x8000 {
                 format!("{:02X}", self.mem.borrow().read(addr))
             } else {
@@ -920,46 +927,46 @@ impl Cpu {
         };
 
         let ctx = match &INSTR_TABLE[opc as usize].1 {
-            AddrMode::ZPG => format!(" = {}", read_u8(opr & 0xff)),
+            AddrMode::ZPG => format!(" = {}", read(opr & 0xff)),
             AddrMode::ABS => {
                 if !matches!(INSTR_TABLE[opc as usize].0, "JMP" | "JSR") {
-                    format!(" = {}", read_u8(opr))
+                    format!(" = {}", read(opr))
                 } else {
                     "".to_string()
                 }
             }
             AddrMode::IND => format!(
                 " = {}{}",
-                read_u8((opr & 0xff00) | (opr as u8).wrapping_add(1) as u16),
-                read_u8(opr)
+                read((opr & 0xff00) | (opr as u8).wrapping_add(1) as u16),
+                read(opr)
             ),
             AddrMode::ZPX => {
                 let addr = (opr as u8).wrapping_add(self.reg.x);
-                format!(" @ {addr:02X} = {}", read_u8(addr as u16))
+                format!(" @ {addr:02X} = {}", read(addr as u16))
             }
             AddrMode::ZPY => {
                 let addr = (opr as u8).wrapping_add(self.reg.y);
-                format!(" @ {addr:02X} = {}", read_u8(addr as u16))
+                format!(" @ {addr:02X} = {}", read(addr as u16))
             }
             AddrMode::ABX => {
                 let addr = opr.wrapping_add(self.reg.x as u16);
-                format!(" @ {addr:04X} = {}", read_u8(addr as u16))
+                format!(" @ {addr:04X} = {}", read(addr as u16))
             }
             AddrMode::ABY => {
                 let addr = opr.wrapping_add(self.reg.y as u16);
-                format!(" @ {addr:04X} = {}", read_u8(addr as u16))
+                format!(" @ {addr:04X} = {}", read(addr as u16))
             }
             AddrMode::INX => {
                 let addr = (opr as u8).wrapping_add(self.reg.x);
                 let ind = self.mem.borrow().read(addr as u16) as u16
                     | (self.mem.borrow().read(addr.wrapping_add(1) as u16) as u16) << 8;
-                format!(" @ {addr:02X} = {ind:04X} = {}", read_u8(ind))
+                format!(" @ {addr:02X} = {ind:04X} = {}", read(ind))
             }
             AddrMode::INY => {
                 let ind = self.mem.borrow().read((opr as u8) as u16) as u16
                     | (self.mem.borrow().read((opr as u8).wrapping_add(1) as u16) as u16) << 8;
                 let addr = ind.wrapping_add(self.reg.y as u16);
-                format!(" = {ind:04X} @ {addr:04X} = {}", read_u8(addr))
+                format!(" = {ind:04X} @ {addr:04X} = {}", read(addr))
             }
 
             AddrMode::IMP | AddrMode::ACC | AddrMode::IMM | AddrMode::REL | AddrMode::UNK => {
@@ -969,9 +976,7 @@ impl Cpu {
 
         let asm = format!("{}{}", asm, ctx);
 
-        let ppu_cycle = self.counter * 3 % PPU_CLOCK_PER_FRAME;
-
-        log::trace!(target: "disasm-nestest",
+        log::trace!(target: "disasnt",
             "{pc:04X}  {bytes:8} {asm:32} \
             A:{a:02X} X:{x:02X} Y:{y:02X} P:{p:02X} SP:{s:02X} \
             PPU:{line:3},{col:3} CYC:{cyc}",
@@ -981,8 +986,6 @@ impl Cpu {
             y = self.reg.y,
             s = self.reg.s,
             p = self.reg.flag.get_u8(2),
-            line = ppu_cycle / PPU_CLOCK_PER_LINE,
-            col = ppu_cycle % PPU_CLOCK_PER_LINE,
             cyc = self.counter,
         );
     }
