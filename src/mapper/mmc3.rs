@@ -19,6 +19,7 @@ pub struct Mmc3 {
     irq_enable: bool,
     ppu_cycle: u64,
     ppu_line: u64,
+    ppu_frame: u64,
     irq_line: Wire<bool>,
     ctrl: MemoryController,
 }
@@ -36,8 +37,9 @@ impl Mmc3 {
             irq_latch: 0,
             irq_counter: 0,
             irq_enable: false,
-            ppu_cycle: 64,
-            ppu_line: 64,
+            ppu_cycle: 0,
+            ppu_line: 0,
+            ppu_frame: 0,
             irq_line,
             ctrl: MemoryController::new(rom),
         };
@@ -118,14 +120,44 @@ impl super::Mapper for Mmc3 {
                 log::warn!("PRG RAM protect: enable: {}, write protect: {}", v[7], v[6]);
             }
 
-            0xC000 => self.irq_latch = data,
-            0xC001 => self.irq_counter = self.irq_latch,
+            0xC000 => {
+                log::trace!(
+                    "MMC3 IRQ latch  : {data:3}, PPU frame={}, line={}, pixel={}",
+                    self.ppu_frame,
+                    self.ppu_line,
+                    self.ppu_cycle
+                );
+                self.irq_latch = data
+            }
+            0xC001 => {
+                log::trace!(
+                    "MMC3 IRQ reload :      PPU frame={}, line={}, pixel={}",
+                    self.ppu_frame,
+                    self.ppu_line,
+                    self.ppu_cycle
+                );
+                self.irq_counter = self.irq_latch
+            }
 
             0xE000 => {
+                log::trace!(
+                    "MMC3 IRQ disable:      PPU frame={}, line={}, pixel={}",
+                    self.ppu_frame,
+                    self.ppu_line,
+                    self.ppu_cycle
+                );
                 self.irq_enable = false;
                 self.irq_line.set(false);
             }
-            0xE001 => self.irq_enable = true,
+            0xE001 => {
+                log::trace!(
+                    "MMC3 IRQ enable :      PPU frame={}, line={}, pixel={}",
+                    self.ppu_frame,
+                    self.ppu_line,
+                    self.ppu_cycle
+                );
+                self.irq_enable = true;
+            }
 
             _ => unreachable!(),
         }
@@ -156,6 +188,7 @@ impl super::Mapper for Mmc3 {
             self.ppu_line += 1;
             if self.ppu_line == LINES_PER_FRAME as u64 {
                 self.ppu_line = 0;
+                self.ppu_frame += 1;
             }
         }
     }

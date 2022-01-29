@@ -56,8 +56,9 @@ fn main(file: PathBuf) -> Result<()> {
         .load_font("./assets/fonts/Inconsolata-Regular.ttf", 32)
         .map_err(|e| anyhow!("{e}"))?;
 
-    let mut surface = sdl2::surface::Surface::new(width as _, height as _, PixelFormatEnum::RGB24)
-        .map_err(|e| anyhow!("{e}"))?;
+    let mut surface =
+        sdl2::surface::Surface::new(width as u32, height as u32, PixelFormatEnum::RGB24)
+            .map_err(|e| anyhow!("{e}"))?;
 
     let audio_subsystem = sdl_context.audio().map_err(|e| anyhow!("{e}"))?;
     let desired_spec = AudioSpecDesired {

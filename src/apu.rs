@@ -120,7 +120,7 @@ impl Noise {
     }
 }
 
-#[derive(Default)]
+#[derive(Default, Debug)]
 struct Dmc {
     enable: bool,
     irq_enabled: bool,
@@ -406,13 +406,6 @@ impl Apu {
             } else {
                 r.sweep_counter -= 1;
             }
-
-            if ch == 0 {
-                eprintln!(
-                    "length-counter: {}, volume: {:2}, decay-level: {:2}, envelope: {}",
-                    r.length_counter, r.volume, r.decay_level, !r.constant_volume
-                );
-            }
         }
         if self.reg.triangle.length_counter > 0 && !self.reg.triangle.length_counter_halt {
             self.reg.triangle.length_counter -= 1;
@@ -483,7 +476,7 @@ impl Apu {
             }
         };
 
-        let dmc = 0;
+        let dmc = self.reg.dmc.output_level;
 
         let tnd_out = if triangle == 0 && noise == 0 && dmc == 0 {
             0.0
