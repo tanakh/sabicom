@@ -6,6 +6,8 @@ use crate::{
     util::{Ref, Wire},
 };
 
+use std::cell;
+
 pub struct MemoryMap {
     ram: Vec<u8>,
     ppu: Ref<Ppu>,
@@ -63,6 +65,10 @@ impl MemoryMap {
                 self.cpu_stall += 513
             }
         }
+    }
+
+    pub fn mapper(&self) -> cell::Ref<dyn Mapper> {
+        self.mapper.borrow()
     }
 
     pub fn tick(&mut self) {
@@ -146,6 +152,10 @@ impl MemoryController {
 
     pub fn prg_pages(&mut self) -> usize {
         self.rom.borrow().prg_rom.len() / 0x2000
+    }
+
+    pub fn get_prg_page(&self, page: usize) -> usize {
+        self.rom_page[page] / 0x2000
     }
 
     /// Maps a CHR ROM page to a given 1KB bank

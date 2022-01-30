@@ -16,10 +16,13 @@ pub struct Mmc3 {
     mirroring: Mirroring,
     irq_latch: u8,
     irq_counter: u8,
+    irq_reload: bool,
     irq_enable: bool,
     ppu_cycle: u64,
     ppu_line: u64,
     ppu_frame: u64,
+    ppu_bus_addr: u16,
+    ppu_a12_edge: bool,
     irq_line: Wire<bool>,
     ctrl: MemoryController,
 }
@@ -36,10 +39,13 @@ impl Mmc3 {
             mirroring,
             irq_latch: 0,
             irq_counter: 0,
+            irq_reload: false,
             irq_enable: false,
             ppu_cycle: 0,
             ppu_line: 0,
             ppu_frame: 0,
+            ppu_bus_addr: 0,
+            ppu_a12_edge: false,
             irq_line,
             ctrl: MemoryController::new(rom),
         };
@@ -81,6 +87,7 @@ impl super::Mapper for Mmc3 {
     }
 
     fn read_chr(&mut self, addr: u16) -> u8 {
+        self.update_ppu_addr(addr);
         self.ctrl.read_chr(addr)
     }
 
@@ -136,7 +143,8 @@ impl super::Mapper for Mmc3 {
                     self.ppu_line,
                     self.ppu_cycle
                 );
-                self.irq_counter = self.irq_latch
+                self.irq_counter = 0;
+                self.irq_reload = true;
             }
 
             0xE000 => {
@@ -164,22 +172,27 @@ impl super::Mapper for Mmc3 {
     }
 
     fn write_chr(&mut self, addr: u16, data: u8) {
+        self.update_ppu_addr(addr);
         self.ctrl.write_chr(addr, data);
     }
 
     fn tick(&mut self) {
-        if self.irq_enable
-            && self.ppu_line < SCREEN_RANGE.end as u64 - 1
-            && self.ppu_cycle == PRE_RENDER_LINE as u64
+        if (self.ppu_line < SCREEN_RANGE.end as u64 || self.ppu_line == PRE_RENDER_LINE as u64)
+            && self.ppu_cycle == 260
         {
-            if self.irq_counter == 0 {
-                self.irq_counter = self.irq_latch;
-            } else {
-                self.irq_counter -= 1;
-                if self.irq_counter == 0 {
+            if self.ppu_a12_edge {
+                let tmp = self.irq_counter;
+                if self.irq_counter == 0 || self.irq_reload {
+                    self.irq_counter = self.irq_latch;
+                    self.irq_reload = false;
+                } else {
+                    self.irq_counter -= 1;
+                }
+                if (tmp > 0 || self.irq_reload) && self.irq_counter == 0 && self.irq_enable {
                     self.irq_line.set(true);
                 }
             }
+            self.ppu_a12_edge = false;
         }
 
         self.ppu_cycle += 1;
@@ -191,5 +204,23 @@ impl super::Mapper for Mmc3 {
                 self.ppu_frame += 1;
             }
         }
+    }
+
+    fn get_prg_page(&self, page: usize) -> usize {
+        self.ctrl.get_prg_page(page)
+    }
+}
+
+impl Mmc3 {
+    fn update_ppu_addr(&mut self, addr: u16) {
+        if addr >= 0x2000 {
+            return;
+        }
+
+        if self.ppu_bus_addr & 0x1000 == 0 && addr & 0x1000 != 0 {
+            self.ppu_a12_edge = true;
+        }
+
+        self.ppu_bus_addr = addr;
     }
 }

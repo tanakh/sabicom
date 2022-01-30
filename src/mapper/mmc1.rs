@@ -160,4 +160,8 @@ impl super::Mapper for Mmc1 {
     fn write_chr(&mut self, addr: u16, data: u8) {
         self.ctrl.write_chr(addr, data);
     }
+
+    fn get_prg_page(&self, page: usize) -> usize {
+        self.ctrl.get_prg_page(page)
+    }
 }

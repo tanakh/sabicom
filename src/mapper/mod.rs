@@ -17,6 +17,10 @@ pub trait Mapper {
     fn write_chr(&mut self, addr: u16, data: u8);
 
     fn tick(&mut self) {}
+
+    fn get_prg_page(&self, page: usize) -> usize {
+        page
+    }
 }
 
 pub fn create_mapper(rom: Ref<Rom>, irq_line: Wire<bool>) -> Ref<dyn Mapper> {

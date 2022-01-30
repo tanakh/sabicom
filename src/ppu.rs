@@ -126,6 +126,16 @@ impl Ppu {
             self.reg.sprite0_hit = false;
         }
 
+        if (self.line < SCREEN_RANGE.end || self.line == PRE_RENDER_LINE) && self.counter == 256 {
+            if screen_visible {
+                let bg_pat_addr = if self.reg.bg_pat_addr { 0x1000 } else { 0 };
+                let spr_pat_addr = if self.reg.sprite_pat_addr { 0x1000 } else { 0 };
+                // FIXME: Dummy read for mapper that use CHR Address value
+                let _ = self.read_pattern(bg_pat_addr);
+                let _ = self.read_pattern(spr_pat_addr);
+            }
+        }
+
         if screen_visible
             && SCREEN_RANGE.contains(&self.line)
             && self.counter < SCREEN_WIDTH
@@ -158,12 +168,8 @@ impl Ppu {
         self.line_buf.fill(bg);
         self.sprite0_hit.fill(false);
 
-        if self.reg.bg_visible {
-            self.render_bg();
-        }
-        if self.reg.sprite_visible {
-            self.render_spr();
-        }
+        self.render_bg();
+        self.render_spr();
 
         if self.reg.bg_clip || self.reg.sprite_clip {
             for i in 0..8 {
@@ -182,6 +188,12 @@ impl Ppu {
         let y_ofs = (self.reg.cur_addr >> 12) & 7;
         let pat_addr = if self.reg.bg_pat_addr { 0x1000 } else { 0x0000 };
         let leftmost = if self.reg.bg_clip { 8 } else { 0 };
+
+        let _ = self.read_pattern(pat_addr);
+
+        if !self.reg.bg_visible {
+            return;
+        }
 
         let mut name_addr = self.reg.cur_addr & 0xfff;
 
@@ -225,6 +237,10 @@ impl Ppu {
     }
 
     pub fn render_spr(&mut self) {
+        if !self.reg.sprite_visible {
+            return;
+        }
+
         let spr_height = if self.reg.sprite_size { 16 } else { 8 };
         let pat_addr = if self.reg.sprite_pat_addr { 0x1000 } else { 0 };
         let leftmost = if self.reg.sprite_clip { 8 } else { 0 };

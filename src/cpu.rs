@@ -895,9 +895,20 @@ impl Cpu {
         let col = ppu_cycle % PPU_CLOCK_PER_LINE;
 
         let asm = disasm(pc, opc, opr);
+        let prg_page = if pc & 0x8000 != 0 {
+            format!(
+                "{:02X}",
+                self.mem
+                    .borrow()
+                    .mapper()
+                    .get_prg_page(((pc & !0x8000) / 0x2000) as _)
+            )
+        } else {
+            "  ".to_string()
+        };
 
         log::trace!(target: "disasm",
-            "{pc:04X}: {asm:13} | A:{a:02X} X:{x:02X} Y:{y:02X} S:{s:02X} P:{n}{v}{d}{i}{z}{c} PPU:{line:3},{col:3}",
+            "{prg_page}:{pc:04X}: {asm:13} | A:{a:02X} X:{x:02X} Y:{y:02X} S:{s:02X} P:{n}{v}{d}{i}{z}{c} PPU:{line:3},{col:3}",
             pc = self.reg.pc,
             a = self.reg.a,
             x = self.reg.x,
