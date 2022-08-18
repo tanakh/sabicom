@@ -309,7 +309,7 @@ impl Apu {
             }
 
             if r.buffer.is_none() && r.length_counter != 0 {
-                r.buffer = Some(ctx.read_prg(r.cur_addr));
+                r.buffer = Some(ctx.read_prg_mapper(r.cur_addr));
 
                 r.cur_addr = r.cur_addr.wrapping_add(1);
                 if r.cur_addr == 0 {

@@ -7,23 +7,29 @@ mod unrom;
 use ambassador::{delegatable_trait, Delegate};
 use serde::{Deserialize, Serialize};
 
-use crate::{context, nes::Error, rom::Rom, util::trait_alias};
+use crate::{context, nes::Error, util::trait_alias};
 
-trait_alias!(pub trait Context = context::Rom + context::Interrupt);
+trait_alias!(pub trait Context = context::MemoryController + context::Rom + context::Interrupt);
 
 #[delegatable_trait]
 pub trait MapperTrait {
-    fn read_prg(&self, ctx: &impl Context, addr: u16) -> u8;
-    fn write_prg(&mut self, ctx: &mut impl Context, addr: u16, data: u8);
+    fn read_prg(&self, ctx: &impl Context, addr: u16) -> u8 {
+        ctx.read_prg(addr)
+    }
 
-    fn read_chr(&mut self, ctx: &mut impl Context, addr: u16) -> u8;
-    fn write_chr(&mut self, ctx: &mut impl Context, addr: u16, data: u8);
+    fn write_prg(&mut self, ctx: &mut impl Context, addr: u16, data: u8) {
+        ctx.write_prg(addr, data);
+    }
+
+    fn read_chr(&mut self, ctx: &mut impl Context, addr: u16) -> u8 {
+        ctx.read_chr(addr)
+    }
+
+    fn write_chr(&mut self, ctx: &mut impl Context, addr: u16, data: u8) {
+        ctx.write_chr(addr, data);
+    }
 
     fn tick(&mut self, _ctx: &mut impl Context) {}
-
-    fn prg_page(&self, page: u16) -> u16 {
-        page
-    }
 }
 
 macro_rules! def_mapper {
@@ -36,11 +42,11 @@ macro_rules! def_mapper {
             )*
         }
 
-        pub fn create_mapper(rom: &Rom) -> Result<Mapper, Error> {
-            let mapper_id = rom.mapper_id;
+        pub fn create_mapper(ctx: &mut impl Context) -> Result<Mapper, Error> {
+            let mapper_id = ctx.rom().mapper_id;
             Ok(match mapper_id {
                 $(
-                    $id => Mapper::$constr(<$ty>::new(rom)),
+                    $id => Mapper::$constr(<$ty>::new(ctx)),
                 )*
                 _ => Err(Error::UnsupportedMapper(mapper_id))?,
             })

@@ -29,6 +29,8 @@ pub enum Error {
     UnsupportedMapper(u16),
     #[error("{0}")]
     DeserializeFailed(#[from] bincode::Error),
+    #[error("backup ram size mismatch: actual: {0}, expected: {1}")]
+    BackupSizeMismatch(usize, usize),
 }
 
 const CORE_INFO: &'static CoreInfo = &CoreInfo {

@@ -2,6 +2,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     context,
+    nes::Error,
     rom::{Mirroring, Rom},
     util::trait_alias,
 };
@@ -27,7 +28,7 @@ impl MemoryMap {
             0x0000..=0x1fff => self.ram[(addr & 0x7ff) as usize],
             0x2000..=0x3fff => ctx.read_ppu(addr & 7),
             0x4000..=0x4017 => ctx.read_apu(addr),
-            0x4018..=0xffff => ctx.read_prg(addr),
+            0x4018..=0xffff => ctx.read_prg_mapper(addr),
         }
     }
 
@@ -36,7 +37,7 @@ impl MemoryMap {
             0x0000..=0x1fff => self.ram[(addr & 0x7ff) as usize],
             0x2000..=0x3fff => None?,
             0x4000..=0x4017 => None?,
-            0x4018..=0xffff => ctx.read_prg(addr),
+            0x4018..=0xffff => ctx.read_prg_mapper(addr),
         })
     }
 
@@ -45,7 +46,7 @@ impl MemoryMap {
             0x0000..=0x1fff => self.ram[(addr & 0x7ff) as usize] = data,
             0x2000..=0x3fff => ctx.write_ppu(addr & 7, data),
             0x4000..=0x4013 | 0x4015..=0x4017 => ctx.write_apu(addr, data),
-            0x4018..=0xffff => ctx.write_prg(addr, data),
+            0x4018..=0xffff => ctx.write_prg_mapper(addr, data),
 
             0x4014 => {
                 // OAM DMA
@@ -88,15 +89,25 @@ pub struct MemoryController {
     rom_page: [usize; 4],
     chr_page: [usize; 8],
     nametable_page: [usize; 4],
+
+    prg_pages: u32,
+    chr_pages: u32,
 }
 
 impl MemoryController {
-    pub fn new(rom: &Rom) -> Self {
+    pub fn new(rom: &Rom, backup: Option<Vec<u8>>) -> Result<Self, Error> {
         assert!(!(rom.chr_ram_size > 0 && !rom.chr_rom.is_empty()));
 
         let mirroring = rom.mirroring;
 
-        let prg_ram = vec![0x00; rom.prg_ram_size];
+        let prg_ram = if let Some(backup) = backup {
+            if backup.len() != rom.prg_ram_size {
+                Err(Error::BackupSizeMismatch(backup.len(), rom.prg_ram_size))?
+            }
+            backup
+        } else {
+            vec![0x00; rom.prg_ram_size]
+        };
         let chr_ram = vec![0x00; rom.chr_ram_size];
 
         let nametable = vec![0x00; 2 * 1024];
@@ -109,6 +120,9 @@ impl MemoryController {
             0x08, 0x3A, 0x00, 0x02, 0x00, 0x20, 0x2C, 0x08,
         ];
 
+        let prg_pages = (rom.prg_rom.len() / 0x2000) as u32;
+        let chr_pages = (rom.chr_rom.len() / 0x0400) as u32;
+
         let mut ret = Self {
             prg_ram,
             chr_ram,
@@ -117,45 +131,47 @@ impl MemoryController {
             rom_page: [0; 4],
             chr_page: [0; 8],
             nametable_page: [0; 4],
+            prg_pages,
+            chr_pages,
         };
 
         for i in 0..4 {
-            ret.map_prg(rom, i, i);
+            ret.map_prg(rom, i, i as _);
         }
 
         for i in 0..8 {
-            ret.map_chr(rom, i, i);
+            ret.map_chr(rom, i, i as _);
         }
 
         ret.set_mirroring(mirroring);
 
-        ret
+        Ok(ret)
     }
 
     /// Maps a PRG ROM page to a given 8KB bank
-    pub fn map_prg(&mut self, rom: &Rom, page: usize, bank: usize) {
-        self.rom_page[page] = (bank * 0x2000) % rom.prg_rom.len();
+    pub fn map_prg(&mut self, rom: &Rom, page: u32, bank8k: u32) {
+        self.rom_page[page as usize] = (bank8k * 0x2000) as usize % rom.prg_rom.len();
     }
 
-    pub fn prg_pages(&mut self, rom: &Rom) -> usize {
-        rom.prg_rom.len() / 0x2000
+    pub fn prg_pages(&self) -> u32 {
+        self.prg_pages
     }
 
-    pub fn prg_page(&self, page: u16) -> u16 {
-        (self.rom_page[page as usize] / 0x2000) as u16
+    pub fn prg_page(&self, page: u32) -> u32 {
+        (self.rom_page[page as usize] / 0x2000) as u32
     }
 
     /// Maps a CHR ROM page to a given 1KB bank
-    pub fn map_chr(&mut self, rom: &Rom, page: usize, bank: usize) {
+    pub fn map_chr(&mut self, rom: &Rom, page: u32, bank1k: u32) {
         if !rom.chr_rom.is_empty() {
-            self.chr_page[page] = (bank * 0x0400) % rom.chr_rom.len();
+            self.chr_page[page as usize] = (bank1k * 0x0400) as usize % rom.chr_rom.len();
         } else {
-            self.chr_page[page] = (bank * 0x0400) % rom.chr_ram_size;
+            self.chr_page[page as usize] = (bank1k * 0x0400) as usize % rom.chr_ram_size;
         }
     }
 
-    pub fn chr_pages(&mut self, rom: &Rom) -> usize {
-        rom.chr_rom.len() / 0x0400
+    pub fn chr_pages(&mut self) -> u32 {
+        self.chr_pages
     }
 
     pub fn map_nametable(&mut self, page: usize, bank: usize) {
@@ -209,7 +225,7 @@ impl MemoryController {
         }
     }
 
-    pub fn write_prg(&mut self, rom: &Rom, addr: u16, data: u8) {
+    pub fn write_prg(&mut self, _rom: &Rom, addr: u16, data: u8) {
         match addr {
             0x6000..=0x7fff => {
                 let addr = addr & 0x1fff;

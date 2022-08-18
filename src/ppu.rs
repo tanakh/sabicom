@@ -344,11 +344,11 @@ impl Ppu {
                 let addr = self.reg.cur_addr & 0x3fff;
 
                 let ret = if addr & 0x3f00 == 0x3f00 {
-                    self.reg.vram_read_buf = ctx.read_chr(addr & !0x1000);
-                    ctx.read_chr(addr)
+                    self.reg.vram_read_buf = ctx.read_chr_mapper(addr & !0x1000);
+                    ctx.read_chr_mapper(addr)
                 } else {
                     let ret = self.reg.vram_read_buf;
-                    self.reg.vram_read_buf = ctx.read_chr(addr);
+                    self.reg.vram_read_buf = ctx.read_chr_mapper(addr);
                     ret
                 };
 
@@ -477,7 +477,7 @@ impl Ppu {
 
                 log::info!(target: "ppureg::PPUDATA", "= ${data:02X}, CHR[${addr:04X}] <- ${data:02X}");
 
-                ctx.write_chr(addr, data);
+                ctx.write_chr_mapper(addr, data);
 
                 let inc_addr = if self.reg.ppu_addr_incr { 32 } else { 1 };
                 self.reg.cur_addr = self.reg.cur_addr.wrapping_add(inc_addr);
@@ -488,13 +488,13 @@ impl Ppu {
 }
 
 fn read_nametable(ctx: &mut impl Context, addr: u16) -> u8 {
-    ctx.read_chr(0x2000 + addr)
+    ctx.read_chr_mapper(0x2000 + addr)
 }
 
 fn read_pattern(ctx: &mut impl Context, addr: u16) -> u8 {
-    ctx.read_chr(addr)
+    ctx.read_chr_mapper(addr)
 }
 
 fn read_palette(ctx: &mut impl Context, index: u8) -> u8 {
-    ctx.read_chr(0x3f00 + index as u16)
+    ctx.read_chr_mapper(0x3f00 + index as u16)
 }

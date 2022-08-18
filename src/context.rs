@@ -46,12 +46,26 @@ pub trait Apu {
 
 #[delegatable_trait]
 pub trait Mapper {
+    fn read_prg_mapper(&self, addr: u16) -> u8;
+    fn write_prg_mapper(&mut self, addr: u16, data: u8);
+    fn read_chr_mapper(&mut self, addr: u16) -> u8;
+    fn write_chr_mapper(&mut self, addr: u16, data: u8);
+    fn tick_mapper(&mut self);
+}
+
+#[delegatable_trait]
+pub trait MemoryController {
+    fn memory_ctrl(&self) -> &memory::MemoryController;
+    fn memory_ctrl_mut(&mut self) -> &mut memory::MemoryController;
+
+    fn prg_page(&self, page: u32) -> u32;
+    fn map_prg(&mut self, page: u32, offset8k: u32);
     fn read_prg(&self, addr: u16) -> u8;
     fn write_prg(&mut self, addr: u16, data: u8);
-    fn read_chr(&mut self, addr: u16) -> u8;
+
+    fn map_chr(&mut self, page: u32, offset1k: u32);
+    fn read_chr(&self, addr: u16) -> u8;
     fn write_chr(&mut self, addr: u16, data: u8);
-    fn prg_page(&self, page: u16) -> u16;
-    fn tick_mapper(&mut self);
 }
 
 #[delegatable_trait]
@@ -87,6 +101,7 @@ pub trait Timing {
 #[delegate(Ppu, target = "inner")]
 #[delegate(Apu, target = "inner")]
 #[delegate(Mapper, target = "inner")]
+#[delegate(MemoryController, target = "inner")]
 #[delegate(Rom, target = "inner")]
 #[delegate(Interrupt, target = "inner")]
 #[delegate(Timing, target = "inner")]
@@ -108,6 +123,7 @@ impl Cpu for Context {
 #[delegate(Ppu, target = "inner")]
 #[delegate(Apu, target = "inner")]
 #[delegate(Mapper, target = "inner")]
+#[delegate(MemoryController, target = "inner")]
 #[delegate(Rom, target = "inner")]
 #[delegate(Interrupt, target = "inner")]
 #[delegate(Timing, target = "inner")]
@@ -140,6 +156,7 @@ impl Bus for Inner {
 
 #[derive(Delegate, Serialize, Deserialize)]
 #[delegate(Mapper, target = "inner")]
+#[delegate(MemoryController, target = "inner")]
 #[delegate(Rom, target = "inner")]
 #[delegate(Interrupt, target = "inner")]
 #[delegate(Timing, target = "inner")]
@@ -186,6 +203,7 @@ impl Apu for Inner2 {
 }
 
 #[derive(Delegate, Serialize, Deserialize)]
+#[delegate(MemoryController, target = "inner")]
 #[delegate(Rom, target = "inner")]
 #[delegate(Interrupt, target = "inner")]
 #[delegate(Timing, target = "inner")]
@@ -195,31 +213,22 @@ struct Inner3 {
 }
 
 impl Mapper for Inner3 {
-    fn read_prg(&self, addr: u16) -> u8 {
+    fn read_prg_mapper(&self, addr: u16) -> u8 {
         use mapper::MapperTrait;
         self.mapper.read_prg(&self.inner, addr)
     }
-
-    fn write_prg(&mut self, addr: u16, data: u8) {
+    fn write_prg_mapper(&mut self, addr: u16, data: u8) {
         use mapper::MapperTrait;
         self.mapper.write_prg(&mut self.inner, addr, data);
     }
-
-    fn read_chr(&mut self, addr: u16) -> u8 {
+    fn read_chr_mapper(&mut self, addr: u16) -> u8 {
         use mapper::MapperTrait;
         self.mapper.read_chr(&mut self.inner, addr)
     }
-
-    fn write_chr(&mut self, addr: u16, data: u8) {
+    fn write_chr_mapper(&mut self, addr: u16, data: u8) {
         use mapper::MapperTrait;
         self.mapper.write_chr(&mut self.inner, addr, data);
     }
-
-    fn prg_page(&self, page: u16) -> u16 {
-        use mapper::MapperTrait;
-        self.mapper.prg_page(page)
-    }
-
     fn tick_mapper(&mut self) {
         use mapper::MapperTrait;
         self.mapper.tick(&mut self.inner)
@@ -230,10 +239,43 @@ impl Mapper for Inner3 {
 #[delegate(Rom, target = "rom")]
 #[delegate(Interrupt, target = "signales")]
 struct Inner4 {
+    mem_ctrl: memory::MemoryController,
     #[serde(skip)]
     rom: rom::Rom,
     signales: Signales,
     now: u64,
+}
+
+impl MemoryController for Inner4 {
+    fn memory_ctrl(&self) -> &memory::MemoryController {
+        &self.mem_ctrl
+    }
+    fn memory_ctrl_mut(&mut self) -> &mut memory::MemoryController {
+        &mut self.mem_ctrl
+    }
+
+    fn prg_page(&self, page: u32) -> u32 {
+        self.mem_ctrl.prg_page(page)
+    }
+    fn map_prg(&mut self, page: u32, bank8k: u32) {
+        self.mem_ctrl.map_prg(&self.rom, page, bank8k);
+    }
+    fn read_prg(&self, addr: u16) -> u8 {
+        self.mem_ctrl.read_prg(&self.rom, addr)
+    }
+    fn write_prg(&mut self, addr: u16, data: u8) {
+        self.mem_ctrl.write_prg(&mut self.rom, addr, data);
+    }
+
+    fn map_chr(&mut self, page: u32, bank1k: u32) {
+        self.mem_ctrl.map_chr(&self.rom, page, bank1k);
+    }
+    fn read_chr(&self, addr: u16) -> u8 {
+        self.mem_ctrl.read_chr(&self.rom, addr)
+    }
+    fn write_chr(&mut self, addr: u16, data: u8) {
+        self.mem_ctrl.write_chr(&mut self.rom, addr, data);
+    }
 }
 
 impl Rom for rom::Rom {
@@ -288,8 +330,17 @@ impl Context {
         let mem = memory::MemoryMap::new();
         let ppu = ppu::Ppu::new();
         let apu = apu::Apu::new();
-        let mapper = create_mapper(&rom)?;
+        let mem_ctrl = memory::MemoryController::new(&rom, backup)?;
         let signales = Signales::default();
+
+        let mut inner = Inner4 {
+            mem_ctrl,
+            rom,
+            signales,
+            now: 0,
+        };
+
+        let mapper = create_mapper(&mut inner)?;
 
         Ok(Context {
             cpu,
@@ -298,14 +349,7 @@ impl Context {
                 inner: Inner2 {
                     ppu,
                     apu,
-                    inner: Inner3 {
-                        mapper,
-                        inner: Inner4 {
-                            rom,
-                            signales,
-                            now: 0,
-                        },
-                    },
+                    inner: Inner3 { mapper, inner },
                 },
             },
         })

@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{context, util::trait_alias};
 
-trait_alias!(pub trait Context = context::Bus + context::Mapper + context::Interrupt + context::Timing);
+trait_alias!(pub trait Context = context::Bus + context::MemoryController + context::Mapper + context::Interrupt + context::Timing);
 
 #[derive(Default, Serialize, Deserialize)]
 pub struct Cpu {
