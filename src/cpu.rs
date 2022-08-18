@@ -1,61 +1,29 @@
-use crate::{
-    consts::{LINES_PER_FRAME, PPU_CLOCK_PER_LINE},
-    memory::MemoryMap,
-    util::{Ref, Wire},
-};
+use serde::{Deserialize, Serialize};
 
-const NMI_VECTOR: u16 = 0xFFFA;
-const RST_VECTOR: u16 = 0xFFFC;
-const IRQ_VECTOR: u16 = 0xFFFE;
+use crate::{context, util::trait_alias};
 
+trait_alias!(pub trait Context = context::Bus + context::Mapper + context::Interrupt + context::Timing);
+
+#[derive(Default, Serialize, Deserialize)]
 pub struct Cpu {
     world: u64,
     counter: u64,
-
-    pub reg: Register,
-
-    mem: Ref<MemoryMap>,
-    wires: Wires,
-
+    reg: Register,
     nmi_prev: bool,
     i_flag_prev: bool,
 }
 
-pub struct Wires {
-    pub nmi: Wire<bool>,
-    pub irq: Wire<bool>,
-    pub rst: Wire<bool>,
-}
-
-#[derive(Debug)]
-pub enum Interrupt {
-    Rst,
-    Irq,
-    Nmi,
-}
-
-pub struct Register {
+#[derive(Default, Serialize, Deserialize)]
+struct Register {
     a: u8,
     x: u8,
     y: u8,
     s: u8,
-    pub pc: u16,
+    pc: u16,
     flag: Flag,
 }
 
-impl Register {
-    fn new() -> Self {
-        Register {
-            a: 0,
-            x: 0,
-            y: 0,
-            s: 0,
-            pc: 0,
-            flag: Flag::new(),
-        }
-    }
-}
-
+#[derive(Default, Serialize, Deserialize)]
 struct Flag {
     c: bool,
     z: bool,
@@ -66,17 +34,6 @@ struct Flag {
 }
 
 impl Flag {
-    fn new() -> Self {
-        Self {
-            c: false,
-            z: false,
-            i: false,
-            d: false,
-            v: false,
-            n: false,
-        }
-    }
-
     fn set_u8(&mut self, v: u8) {
         self.n = (v & 0x80) != 0;
         self.v = (v & 0x40) != 0;
@@ -104,79 +61,82 @@ impl Flag {
     }
 }
 
+#[derive(Debug)]
+pub enum Interrupt {
+    Rst,
+    Irq,
+    Nmi,
+}
+
+impl Interrupt {
+    fn vector_addr(&self) -> u16 {
+        match self {
+            Interrupt::Rst => 0xFFFC,
+            Interrupt::Irq => 0xFFFE,
+            Interrupt::Nmi => 0xFFFA,
+        }
+    }
+}
+
 impl Cpu {
-    pub fn new(mem: Ref<MemoryMap>, wires: Wires) -> Self {
-        let mut ret = Self {
-            mem,
-            counter: 2,
-            world: 0,
-            reg: Register::new(),
-            wires,
-            nmi_prev: false,
-            i_flag_prev: false,
-        };
-        ret.exec_interrupt(Interrupt::Rst, false);
-        ret
+    pub fn reset(&mut self, ctx: &mut impl Context) {
+        self.exec_interrupt(ctx, Interrupt::Rst, false);
     }
 
-    fn exec_interrupt(&mut self, interrupt: Interrupt, brk: bool) {
+    fn exec_interrupt(&mut self, ctx: &mut impl Context, interrupt: Interrupt, brk: bool) {
         log::info!("Interrupt: {:?}", interrupt);
 
-        let vect = match interrupt {
-            Interrupt::Rst => RST_VECTOR,
-            Interrupt::Irq => IRQ_VECTOR,
-            Interrupt::Nmi => NMI_VECTOR,
-        };
+        let vector = interrupt.vector_addr();
 
-        self.push_u16(self.reg.pc);
-        self.push_u8(self.reg.flag.get_u8(if brk { 3 } else { 2 }));
-        self.reg.pc = self.read(vect) as u16 | (self.read(vect + 1) as u16) << 8;
+        self.push16(ctx, self.reg.pc);
+        self.push8(ctx, self.reg.flag.get_u8(if brk { 3 } else { 2 }));
+        self.reg.pc = self.read(ctx, vector) as u16 | (self.read(ctx, vector + 1) as u16) << 8;
         self.reg.flag.i = true;
     }
 
-    fn read(&mut self, addr: u16) -> u8 {
-        let ret = self.mem.borrow().read(addr);
-        self.tick_bus();
+    fn read(&mut self, ctx: &mut impl Context, addr: u16) -> u8 {
+        let ret = ctx.read(addr);
+        self.tick_bus(ctx);
         log::trace!(target: "prgmem", "[${addr:04X}] -> ${ret:02X}");
         ret
     }
 
-    fn write(&mut self, addr: u16, data: u8) {
-        self.mem.borrow_mut().write(addr, data);
-        self.tick_bus();
+    fn write(&mut self, ctx: &mut impl Context, addr: u16, data: u8) {
+        ctx.write(addr, data);
+        self.tick_bus(ctx);
         log::trace!(target: "prgmem", "[${addr:04X}] <- ${data:02X}");
     }
 
-    fn fetch_u8(&mut self) -> u8 {
-        let ret = self.read(self.reg.pc);
+    fn fetch8(&mut self, ctx: &mut impl Context) -> u8 {
+        let ret = self.read(ctx, self.reg.pc);
         self.reg.pc = self.reg.pc.wrapping_add(1);
         ret
     }
 
-    fn fetch_u16(&mut self) -> u16 {
-        let lo = self.fetch_u8();
-        let hi = self.fetch_u8();
+    fn fetch16(&mut self, ctx: &mut impl Context) -> u16 {
+        let lo = self.fetch8(ctx);
+        let hi = self.fetch8(ctx);
         lo as u16 | (hi as u16) << 8
     }
 
-    fn push_u8(&mut self, data: u8) {
-        self.write(0x100 + self.reg.s as u16, data);
+    fn push8(&mut self, ctx: &mut impl Context, data: u8) {
+        self.write(ctx, 0x100 + self.reg.s as u16, data);
         self.reg.s = self.reg.s.wrapping_sub(1);
     }
 
-    fn push_u16(&mut self, data: u16) {
-        self.push_u8((data >> 8) as u8);
-        self.push_u8(data as u8);
+    fn push16(&mut self, ctx: &mut impl Context, data: u16) {
+        self.push8(ctx, (data >> 8) as u8);
+        self.push8(ctx, data as u8);
     }
 
-    fn pop_u8(&mut self) -> u8 {
+    fn pop8(&mut self, ctx: &mut impl Context) -> u8 {
         self.reg.s = self.reg.s.wrapping_add(1);
-        self.read(0x100 + self.reg.s as u16)
+        self.read(ctx, 0x100 + self.reg.s as u16)
     }
 
-    fn pop_u16(&mut self) -> u16 {
-        let lo = self.pop_u8() as u16;
-        let hi = self.pop_u8() as u16;
+    fn pop16(&mut self, ctx: &mut impl Context) -> u16 {
+        let lo = self.pop8(ctx) as u16;
+        let hi = self.pop8(ctx) as u16;
         lo | (hi << 8)
     }
 }
@@ -283,49 +243,48 @@ macro_rules! instructions {
 }
 
 impl Cpu {
-    pub fn tick(&mut self) {
-        let stall = self.mem.borrow().cpu_stall;
-        if stall > 0 {
-            self.mem.borrow_mut().cpu_stall = 0;
-            for _ in 0..stall {
-                self.tick_bus();
-            }
+    pub fn tick(&mut self, ctx: &mut impl Context) {
+        let stall = ctx.cpu_stall();
+        for _ in 0..stall {
+            self.tick_bus(ctx);
         }
 
         self.world += 1;
 
         while self.counter < self.world {
-            let nmi_cur = self.wires.nmi.get();
+            let nmi_cur = ctx.nmi();
             let nmi_prev = self.nmi_prev;
             self.nmi_prev = nmi_cur;
 
-            let irq_prev = self.wires.irq.get();
+            let irq_prev = ctx.irq();
             self.i_flag_prev = self.reg.flag.i;
 
-            self.exec_one();
+            self.exec_one(ctx);
 
             if nmi_prev && !nmi_cur {
-                self.exec_interrupt(Interrupt::Nmi, false);
+                self.exec_interrupt(ctx, Interrupt::Nmi, false);
                 continue;
             }
 
             if !self.i_flag_prev && irq_prev {
-                self.exec_interrupt(Interrupt::Irq, false);
+                self.exec_interrupt(ctx, Interrupt::Irq, false);
                 continue;
             }
         }
     }
 
-    fn tick_bus(&mut self) {
+    fn tick_bus(&mut self, ctx: &mut impl Context) {
         self.counter += 1;
-        self.mem.borrow_mut().tick();
+        ctx.tick_bus();
     }
 
-    fn exec_one(&mut self) {
-        self.trace();
+    fn exec_one(&mut self, ctx: &mut impl Context) {
+        if log::log_enabled!(log::Level::Trace) {
+            self.trace(ctx);
+        }
 
         let opaddr = self.reg.pc;
-        let opc = self.fetch_u8();
+        let opc = self.fetch8(ctx);
 
         macro_rules! gen_code {
             ($($opc:literal: $a:tt $b:ident $($c:ident)?, )*) => {{
@@ -367,11 +326,11 @@ impl Cpu {
                 exec!($mne $mode)
             };
             ($mne:ident IMP) => {{
-                let _ = self.read(self.reg.pc);
+                let _ = self.read(ctx, self.reg.pc);
                 exec_op!($mne)
             }};
             ($mne:ident ACC) => {{
-                let _ = self.read(self.reg.pc);
+                let _ = self.read(ctx, self.reg.pc);
                 exec_op!($mne, ACC)
             }};
 
@@ -392,7 +351,7 @@ impl Cpu {
                 ret
             }};
             (ABS, $read:ident) => {{
-                self.fetch_u16()
+                self.fetch16(ctx)
             }};
             (ABX, $read:ident) => {
                 effaddr!(abs_ix, x, $read)
@@ -401,52 +360,52 @@ impl Cpu {
                 effaddr!(abs_ix, y, $read)
             };
             (abs_ix, $reg:ident, $read:ident) => {{
-                let addr = self.fetch_u16();
+                let addr = self.fetch16(ctx);
                 let tmp = (addr & 0xff) + self.reg.$reg as u16;
                 if !$read || tmp >= 0x100 {
-                    let _ = self.read(addr & 0xff00 | tmp & 0xff);
+                    let _ = self.read(ctx, addr & 0xff00 | tmp & 0xff);
                 }
                 addr.wrapping_add(self.reg.$reg as u16)
             }};
             (IND, $read:ident) => {{
-                let lo = self.fetch_u16();
+                let lo = self.fetch16(ctx);
                 let hi = (lo & 0xff00) | (lo as u8).wrapping_add(1) as u16;
-                self.read(lo) as u16 | (self.read(hi) as u16) << 8
+                self.read(ctx, lo) as u16 | (self.read(ctx, hi) as u16) << 8
             }};
             (ZPG, $read:ident) => {{
-                self.fetch_u8() as u16
+                self.fetch8(ctx) as u16
             }};
             (ZPX, $read:ident) => {{
-                let addr = self.fetch_u8();
-                self.read(addr as u16);
+                let addr = self.fetch8(ctx);
+                self.read(ctx, addr as u16);
                 addr.wrapping_add(self.reg.x) as u16
             }};
             (ZPY, $read:ident) => {{
-                let addr = self.fetch_u8();
-                self.read(addr as u16);
+                let addr = self.fetch8(ctx);
+                self.read(ctx, addr as u16);
                 addr.wrapping_add(self.reg.y) as u16
             }};
             (INX, $read:ident) => {{
-                let a = self.fetch_u8();
-                let _ = self.read(a as u16);
+                let a = self.fetch8(ctx);
+                let _ = self.read(ctx, a as u16);
                 let a = a.wrapping_add(self.reg.x);
-                let lo = self.read(a as u16);
-                let hi = self.read(a.wrapping_add(1) as u16);
+                let lo = self.read(ctx, a as u16);
+                let hi = self.read(ctx, a.wrapping_add(1) as u16);
                 lo as u16 | (hi as u16) << 8
             }};
             (INY, $read:ident) => {{
-                let a = self.fetch_u8();
-                let lo = self.read(a as u16) as u16;
-                let hi = self.read(a.wrapping_add(1) as u16) as u16;
+                let a = self.fetch8(ctx);
+                let lo = self.read(ctx, a as u16) as u16;
+                let hi = self.read(ctx, a.wrapping_add(1) as u16) as u16;
                 let addr = (lo | hi << 8);
                 let tmp = lo + self.reg.y as u16;
                 if !$read || tmp >= 0x100 {
-                    let _ = self.read(hi << 8 | tmp & 0xff);
+                    let _ = self.read(ctx, hi << 8 | tmp & 0xff);
                 }
                 addr.wrapping_add(self.reg.y as u16)
             }};
             (REL, $read:ident) => {{
-                let rel = self.fetch_u8() as i8;
+                let rel = self.fetch8(ctx) as i8;
                 self.reg.pc.wrapping_add(rel as u16)
             }};
             (UNK, $read:ident) => {{}};
@@ -455,7 +414,7 @@ impl Cpu {
         macro_rules! exec_op {
             (ADC, $addr:ident) => {{
                 let a = self.reg.a as u16;
-                let b = self.read($addr) as u16;
+                let b = self.read(ctx, $addr) as u16;
                 let c = self.reg.flag.c as u16;
                 let r = a.wrapping_add(b).wrapping_add(c);
                 self.reg.flag.c = r > 0xff;
@@ -465,7 +424,7 @@ impl Cpu {
             }};
             (SBC, $addr:ident) => {{
                 let a = self.reg.a as u16;
-                let b = self.read($addr) as u16;
+                let b = self.read(ctx, $addr) as u16;
                 let c = self.reg.flag.c as u16;
                 let r = a.wrapping_sub(b).wrapping_sub(1 - c);
                 self.reg.flag.c = r <= 0xff;
@@ -474,19 +433,19 @@ impl Cpu {
                 self.reg.flag.set_nz(self.reg.a);
             }};
             (AND, $addr:ident) => {{
-                self.reg.a &= self.read($addr);
+                self.reg.a &= self.read(ctx, $addr);
                 self.reg.flag.set_nz(self.reg.a);
             }};
             (ORA, $addr:ident) => {{
-                self.reg.a |= self.read($addr);
+                self.reg.a |= self.read(ctx, $addr);
                 self.reg.flag.set_nz(self.reg.a);
             }};
             (EOR, $addr:ident) => {{
-                self.reg.a ^= self.read($addr);
+                self.reg.a ^= self.read(ctx, $addr);
                 self.reg.flag.set_nz(self.reg.a);
             }};
             (BIT, $addr:ident) => {{
-                let r = self.read($addr);
+                let r = self.read(ctx, $addr);
                 self.reg.flag.v = r & 0x40 != 0;
                 self.reg.flag.n = r & 0x80 != 0;
                 self.reg.flag.z = (self.reg.a & r) == 0;
@@ -494,7 +453,7 @@ impl Cpu {
 
             (cmp, $reg:ident, $addr:ident) => {{
                 let a = self.reg.$reg as u16;
-                let b = self.read($addr) as u16;
+                let b = self.read(ctx, $addr) as u16;
                 let r = a.wrapping_sub(b);
                 self.reg.flag.c = r <= 0xff;
                 self.reg.flag.set_nz(r as u8);
@@ -510,7 +469,7 @@ impl Cpu {
             }};
 
             (ld, $reg:ident, $addr:ident) => {{
-                self.reg.$reg = self.read($addr);
+                self.reg.$reg = self.read(ctx, $addr);
                 self.reg.flag.set_nz(self.reg.$reg);
             }};
             (LDA, $addr:ident) => {{
@@ -524,7 +483,7 @@ impl Cpu {
             }};
 
             (st, $reg:ident, $addr:ident) => {{
-                self.write($addr, self.reg.$reg);
+                self.write(ctx, $addr, self.reg.$reg);
             }};
             (STA, $addr:ident) => {{
                 exec_op!(st, a, $addr)
@@ -563,10 +522,10 @@ impl Cpu {
             }};
 
             (rmw, $op:ident, $addr:ident) => {{
-                let mut a = self.read($addr);
-                self.write($addr, a);
+                let mut a = self.read(ctx, $addr);
+                self.write(ctx, $addr, a);
                 exec_op!($op, a);
-                self.write($addr, a);
+                self.write(ctx, $addr, a);
             }};
 
             (asl, $var:expr) => {{
@@ -647,30 +606,30 @@ impl Cpu {
                 self.reg.pc = $addr;
             }};
             (JSR, $addr:ident) => {{
-                let _ = self.read(self.reg.s as u16 | 0x100);
-                self.push_u16(self.reg.pc.wrapping_sub(1));
+                let _ = self.read(ctx, self.reg.s as u16 | 0x100);
+                self.push16(ctx, self.reg.pc.wrapping_sub(1));
                 self.reg.pc = $addr;
             }};
             (RTS) => {{
-                let _ = self.read(self.reg.s as u16 | 0x100);
-                let pc = self.pop_u16();
-                let _ = self.read(pc);
+                let _ = self.read(ctx, self.reg.s as u16 | 0x100);
+                let pc = self.pop16(ctx);
+                let _ = self.read(ctx, pc);
                 self.reg.pc = pc.wrapping_add(1);
             }};
             (RTI) => {{
-                let _ = self.read(self.reg.s as u16 | 0x100);
-                let p = self.pop_u8();
+                let _ = self.read(ctx, self.reg.s as u16 | 0x100);
+                let p = self.pop8(ctx);
                 self.reg.flag.set_u8(p);
                 // Flag set by RTI affects interrupts
                 self.i_flag_prev = self.reg.flag.i;
-                self.reg.pc = self.pop_u16()
+                self.reg.pc = self.pop16(ctx);
             }};
 
             (bra, $cond:ident, $val:expr, $addr:ident) => {{
                 if self.reg.flag.$cond == $val {
-                    let _ = self.read(self.reg.pc);
+                    let _ = self.read(ctx, self.reg.pc);
                     if self.reg.pc & 0xff00 != $addr & 0xff00 {
-                        self.read(self.reg.pc & 0xff00 | $addr & 0xff);
+                        self.read(ctx, self.reg.pc & 0xff00 | $addr & 0xff);
                     }
                     self.reg.pc = $addr;
                 }
@@ -723,25 +682,25 @@ impl Cpu {
             }};
 
             (PHA) => {{
-                self.push_u8(self.reg.a);
+                self.push8(ctx, self.reg.a);
             }};
             (PHP) => {{
-                self.push_u8(self.reg.flag.get_u8(3));
+                self.push8(ctx, self.reg.flag.get_u8(3));
             }};
             (PLA) => {{
-                let _ = self.read(self.reg.s as u16 | 0x100);
-                self.reg.a = self.pop_u8();
+                let _ = self.read(ctx, self.reg.s as u16 | 0x100);
+                self.reg.a = self.pop8(ctx);
                 self.reg.flag.set_nz(self.reg.a);
             }};
             (PLP) => {{
-                let _ = self.read(self.reg.s as u16 | 0x100);
-                let p = self.pop_u8();
+                let _ = self.read(ctx, self.reg.s as u16 | 0x100);
+                let p = self.pop8(ctx);
                 self.reg.flag.set_u8(p);
             }};
 
             (BRK) => {{
                 self.reg.pc = self.reg.pc.wrapping_add(1);
-                self.exec_interrupt(Interrupt::Irq, true);
+                self.exec_interrupt(ctx, Interrupt::Irq, true);
                 // Interrupt after BRK did not happen
                 self.i_flag_prev = self.reg.flag.i;
             }};
@@ -750,31 +709,31 @@ impl Cpu {
 
             // Undocumented
             (NOP, $addr:ident) => {{
-                let _ = self.read($addr);
+                let _ = self.read(ctx, $addr);
             }};
 
             (LAX, $addr:ident) => {{
-                self.reg.a = self.read($addr);
+                self.reg.a = self.read(ctx, $addr);
                 self.reg.x = self.reg.a;
                 self.reg.flag.set_nz(self.reg.a);
             }};
             (SAX, $addr:ident) => {{
-                self.write($addr, self.reg.a & self.reg.x);
+                self.write(ctx, $addr, self.reg.a & self.reg.x);
             }};
             (DCP, $addr:ident) => {{
-                let b = self.read($addr);
-                self.write($addr, b);
+                let b = self.read(ctx, $addr);
+                self.write(ctx, $addr, b);
                 let b = b.wrapping_sub(1);
-                self.write($addr, b);
+                self.write(ctx, $addr, b);
                 let r = (self.reg.a as u16).wrapping_sub(b as u16);
                 self.reg.flag.c = r <= 0xff;
                 self.reg.flag.set_nz(r as u8);
             }};
             (ISB, $addr:ident) => {{
-                let b = self.read($addr);
-                self.write($addr, b);
+                let b = self.read(ctx, $addr);
+                self.write(ctx, $addr, b);
                 let b = b.wrapping_add(1);
-                self.write($addr, b);
+                self.write(ctx, $addr, b);
                 let a = self.reg.a as u16;
                 let b = b as u16;
                 let c = self.reg.flag.c as u16;
@@ -785,40 +744,40 @@ impl Cpu {
                 self.reg.flag.set_nz(self.reg.a);
             }};
             (SLO, $addr:ident) => {{
-                let b = self.read($addr);
-                self.write($addr, b);
+                let b = self.read(ctx, $addr);
+                self.write(ctx, $addr, b);
                 self.reg.flag.c = b >> 7 != 0;
                 let b = b << 1;
                 self.reg.a |= b;
-                self.write($addr, b);
+                self.write(ctx, $addr, b);
                 self.reg.flag.set_nz(self.reg.a);
             }};
             (RLA, $addr:ident) => {{
-                let b = self.read($addr);
-                self.write($addr, b);
+                let b = self.read(ctx, $addr);
+                self.write(ctx, $addr, b);
                 let c = self.reg.flag.c;
                 self.reg.flag.c = b >> 7 != 0;
                 let b = (b << 1) | c as u8;
-                self.write($addr, b);
+                self.write(ctx, $addr, b);
                 self.reg.a &= b;
                 self.reg.flag.set_nz(self.reg.a);
             }};
             (SRE, $addr:ident) => {{
-                let b = self.read($addr);
-                self.write($addr, b);
+                let b = self.read(ctx, $addr);
+                self.write(ctx, $addr, b);
                 self.reg.flag.c = b & 1 != 0;
                 let b = b >> 1;
-                self.write($addr, b);
+                self.write(ctx, $addr, b);
                 self.reg.a ^= b;
                 self.reg.flag.set_nz(self.reg.a);
             }};
             (RRA, $addr:ident) => {{
-                let b = self.read($addr);
-                self.write($addr, b);
+                let b = self.read(ctx, $addr);
+                self.write(ctx, $addr, b);
                 let c = self.reg.flag.c as u8;
                 self.reg.flag.c = b & 1 != 0;
                 let b = (b >> 1) | (c << 7);
-                self.write($addr, b);
+                self.write(ctx, $addr, b);
                 let a = self.reg.a as u16;
                 let b = b as u16;
                 let c = self.reg.flag.c as u16;
@@ -829,44 +788,45 @@ impl Cpu {
                 self.reg.flag.set_nz(self.reg.a);
             }};
             (AAC, $addr:ident) => {{
-                self.reg.a &= self.read($addr);
+                self.reg.a &= self.read(ctx, $addr);
                 self.reg.flag.set_nz(self.reg.a);
                 self.reg.flag.c = self.reg.flag.n;
             }};
             (ASR, $addr:ident) => {{
-                self.reg.a &= self.read($addr);
+                self.reg.a &= self.read(ctx, $addr);
                 self.reg.flag.c = self.reg.a & 1 != 0;
                 self.reg.a >>= 1;
                 self.reg.flag.set_nz(self.reg.a);
             }};
             (ARR, $addr:ident) => {{
-                self.reg.a &= self.read($addr);
+                self.reg.a &= self.read(ctx, $addr);
                 self.reg.a = (self.reg.a >> 1) | (self.reg.flag.c as u8) << 7;
                 self.reg.flag.set_nz(self.reg.a);
                 self.reg.flag.c = (self.reg.a >> 6) & 1 != 0;
                 self.reg.flag.v = ((self.reg.a >> 5) & 1 != 0) != self.reg.flag.c;
             }};
             (ATX, $addr:ident) => {{
-                self.reg.a = self.read($addr);
+                self.reg.a = self.read(ctx, $addr);
                 self.reg.x = self.reg.a;
                 self.reg.flag.set_nz(self.reg.a);
             }};
             (AXS, $addr:ident) => {{
-                let t = ((self.reg.x & self.reg.a) as u16).wrapping_sub(self.read($addr) as u16);
+                let t =
+                    ((self.reg.x & self.reg.a) as u16).wrapping_sub(self.read(ctx, $addr) as u16);
                 self.reg.x = t as u8;
                 self.reg.flag.set_nz(self.reg.x);
                 self.reg.flag.c = t <= 0xff;
             }};
             (SYA, $addr:ident) => {{
                 let t = self.reg.y & (($addr >> 8) + 1) as u8;
-                if self.reg.x as u16 + self.read(opaddr.wrapping_add(1)) as u16 <= 0xff {
-                    self.write($addr, t);
+                if self.reg.x as u16 + self.read(ctx, opaddr.wrapping_add(1)) as u16 <= 0xff {
+                    self.write(ctx, $addr, t);
                 }
             }};
             (SXA, $addr:ident) => {{
                 let t = self.reg.x & (($addr >> 8) + 1) as u8;
-                if self.reg.y as u16 + self.read(opaddr.wrapping_add(1)) as u16 <= 0xff {
-                    self.write($addr, t);
+                if self.reg.y as u16 + self.read(ctx, opaddr.wrapping_add(1)) as u16 <= 0xff {
+                    self.write(ctx, $addr, t);
                 }
             }};
 
@@ -878,17 +838,13 @@ impl Cpu {
         instructions!(gen_code);
     }
 
-    fn trace(&self) {
-        if !log::log_enabled!(target: "disasm", log::Level::Trace)
-            && !log::log_enabled!(target: "disasnt", log::Level::Trace)
-        {
-            return;
-        }
+    fn trace(&self, ctx: &impl Context) {
+        use crate::consts::{LINES_PER_FRAME, PPU_CLOCK_PER_LINE};
 
         let pc = self.reg.pc;
-        let opc = self.mem.borrow().read(pc);
-        let opr =
-            self.mem.borrow().read(pc + 1) as u16 | (self.mem.borrow().read(pc + 2) as u16) << 8;
+        let opc = ctx.read_pure(pc).unwrap_or(0);
+        let opr = ctx.read_pure(pc + 1).unwrap_or(0) as u16
+            | (ctx.read_pure(pc + 2).unwrap_or(0) as u16) << 8;
 
         let ppu_cycle = self.counter * 3;
         let line = ppu_cycle / PPU_CLOCK_PER_LINE % LINES_PER_FRAME as u64;
@@ -896,13 +852,7 @@ impl Cpu {
 
         let asm = disasm(pc, opc, opr);
         let prg_page = if pc & 0x8000 != 0 {
-            format!(
-                "{:02X}",
-                self.mem
-                    .borrow()
-                    .mapper()
-                    .get_prg_page(((pc & !0x8000) / 0x2000) as _)
-            )
+            format!("{:02X}", ctx.prg_page(((pc & !0x8000) / 0x2000) as _))
         } else {
             "  ".to_string()
         };
@@ -931,7 +881,7 @@ impl Cpu {
 
         let read = |addr: u16| {
             if addr < 0x2000 || addr >= 0x8000 {
-                format!("{:02X}", self.mem.borrow().read(addr))
+                format!("{:02X}", ctx.read_pure(addr).unwrap_or(0))
             } else {
                 format!("??")
             }
@@ -969,13 +919,16 @@ impl Cpu {
             }
             AddrMode::INX => {
                 let addr = (opr as u8).wrapping_add(self.reg.x);
-                let ind = self.mem.borrow().read(addr as u16) as u16
-                    | (self.mem.borrow().read(addr.wrapping_add(1) as u16) as u16) << 8;
+                let ind = ctx.read_pure(addr as u16).unwrap_or(0) as u16
+                    | (ctx.read_pure(addr.wrapping_add(1) as u16).unwrap_or(0) as u16) << 8;
                 format!(" @ {addr:02X} = {ind:04X} = {}", read(ind))
             }
             AddrMode::INY => {
-                let ind = self.mem.borrow().read((opr as u8) as u16) as u16
-                    | (self.mem.borrow().read((opr as u8).wrapping_add(1) as u16) as u16) << 8;
+                let ind = ctx.read_pure((opr as u8) as u16).unwrap_or(0) as u16
+                    | (ctx
+                        .read_pure((opr as u8).wrapping_add(1) as u16)
+                        .unwrap_or(0) as u16)
+                        << 8;
                 let addr = ind.wrapping_add(self.reg.y as u16);
                 format!(" = {ind:04X} @ {addr:04X} = {}", read(addr))
             }

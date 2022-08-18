@@ -1,30 +1,25 @@
-use crate::{
-    consts::*,
-    mapper::Mapper,
-    palette::NES_PALETTE,
-    util::{FrameBuffer, Ref, Wire},
-};
-
 use bitvec::prelude::*;
+use meru_interface::FrameBuffer;
+use serde::{Deserialize, Serialize};
 
+use crate::{consts::*, context, palette::NES_PALETTE, util::trait_alias};
+
+trait_alias!(pub trait Context = context::Mapper + context::Interrupt);
+
+#[derive(Serialize, Deserialize)]
 pub struct Ppu {
     reg: Register,
     oam: Vec<u8>,
     counter: usize,
     line: usize,
     frame: u64,
-    mapper: Ref<dyn Mapper>,
-    wires: Wires,
     line_buf: Vec<u8>,
     sprite0_hit: Vec<bool>,
-    pub frame_buf: FrameBuffer,
+    #[serde(skip)]
+    frame_buffer: FrameBuffer,
 }
 
-pub struct Wires {
-    pub nmi: Wire<bool>,
-}
-
-#[derive(Default)]
+#[derive(Default, Serialize, Deserialize)]
 struct Register {
     buf: u8,
     vram_read_buf: u8,
@@ -64,22 +59,32 @@ impl Register {
 }
 
 impl Ppu {
-    pub fn new(mapper: Ref<dyn Mapper>, wires: Wires) -> Self {
+    pub fn new() -> Self {
         Self {
             reg: Register::new(),
             oam: vec![0x00; 256],
             counter: 0,
             line: 0,
             frame: 0,
-            mapper,
-            wires,
             line_buf: vec![0x00; SCREEN_WIDTH],
             sprite0_hit: vec![false; SCREEN_WIDTH],
-            frame_buf: FrameBuffer::new(SCREEN_WIDTH, SCREEN_HEIGHT),
+            frame_buffer: FrameBuffer::new(SCREEN_WIDTH, SCREEN_HEIGHT),
         }
     }
 
-    pub fn tick(&mut self) {
+    pub fn frame_buffer(&self) -> &FrameBuffer {
+        &self.frame_buffer
+    }
+
+    pub fn frame_buffer_mut(&mut self) -> &mut FrameBuffer {
+        &mut self.frame_buffer
+    }
+
+    pub fn frame(&self) -> u64 {
+        self.frame
+    }
+
+    pub fn tick(&mut self, ctx: &mut impl Context) {
         // 1 PPU cycle for 1 pixel
 
         let screen_visible = self.reg.bg_visible || self.reg.sprite_visible;
@@ -96,7 +101,7 @@ impl Ppu {
             }
 
             if SCREEN_RANGE.contains(&self.line) {
-                self.render_line();
+                self.render_line(ctx);
 
                 if screen_visible {
                     if (self.reg.cur_addr >> 12) & 7 == 7 {
@@ -131,8 +136,8 @@ impl Ppu {
                 let bg_pat_addr = if self.reg.bg_pat_addr { 0x1000 } else { 0 };
                 let spr_pat_addr = if self.reg.sprite_pat_addr { 0x1000 } else { 0 };
                 // FIXME: Dummy read for mapper that use CHR Address value
-                let _ = self.read_pattern(bg_pat_addr);
-                let _ = self.read_pattern(spr_pat_addr);
+                let _ = read_pattern(ctx, bg_pat_addr);
+                let _ = read_pattern(ctx, spr_pat_addr);
             }
         }
 
@@ -155,21 +160,17 @@ impl Ppu {
             }
         }
 
-        let nmi_line = !(self.reg.vblank && self.reg.nmi_enable);
-        self.wires.nmi.set(nmi_line);
+        let nmi = !(self.reg.vblank && self.reg.nmi_enable);
+        ctx.set_nmi(nmi);
     }
 
-    pub fn frame(&self) -> u64 {
-        self.frame
-    }
-
-    pub fn render_line(&mut self) {
-        let bg = self.read_palette(0) & 0x3f;
+    pub fn render_line(&mut self, ctx: &mut impl Context) {
+        let bg = read_palette(ctx, 0) & 0x3f;
         self.line_buf.fill(bg);
         self.sprite0_hit.fill(false);
 
-        self.render_bg();
-        self.render_spr();
+        self.render_bg(ctx);
+        self.render_spr(ctx);
 
         if self.reg.bg_clip || self.reg.sprite_clip {
             for i in 0..8 {
@@ -178,18 +179,18 @@ impl Ppu {
         }
 
         for x in 0..SCREEN_WIDTH {
-            self.frame_buf
-                .set(x, self.line, NES_PALETTE[self.line_buf[x] as usize & 0x3f]);
+            *self.frame_buffer.pixel_mut(x, self.line) =
+                NES_PALETTE[self.line_buf[x] as usize & 0x3f].clone();
         }
     }
 
-    pub fn render_bg(&mut self) {
+    pub fn render_bg(&mut self, ctx: &mut impl Context) {
         let x_ofs = self.reg.scroll_x as usize;
         let y_ofs = (self.reg.cur_addr >> 12) & 7;
         let pat_addr = if self.reg.bg_pat_addr { 0x1000 } else { 0x0000 };
         let leftmost = if self.reg.bg_clip { 8 } else { 0 };
 
-        let _ = self.read_pattern(pat_addr);
+        let _ = read_pattern(ctx, pat_addr);
 
         if !self.reg.bg_visible {
             return;
@@ -198,10 +199,10 @@ impl Ppu {
         let mut name_addr = self.reg.cur_addr & 0xfff;
 
         for i in 0..33 {
-            let tile = self.read_nametable(name_addr) as u16 * 16;
+            let tile = read_nametable(ctx, name_addr) as u16 * 16;
 
-            let b0 = self.read_pattern(pat_addr + tile + y_ofs);
-            let b1 = self.read_pattern(pat_addr + tile + 8 + y_ofs);
+            let b0 = read_pattern(ctx, pat_addr + tile + y_ofs);
+            let b1 = read_pattern(ctx, pat_addr + tile + 8 + y_ofs);
 
             let name_addr_v = name_addr.view_bits::<Lsb0>();
             let tx = &name_addr_v[0..5];
@@ -214,7 +215,7 @@ impl Ppu {
             attr_addr[0..3].copy_from_bitslice(&tx[2..5]);
 
             let aofs = tx[1] as usize * 2 + ty[1] as usize * 4;
-            let attr = (self.read_nametable(attr_addr.load()) >> aofs) & 3;
+            let attr = (read_nametable(ctx, attr_addr.load()) >> aofs) & 3;
 
             for lx in 0..8 {
                 let x = (i * 8 + lx + 8 - x_ofs) as usize;
@@ -224,7 +225,7 @@ impl Ppu {
 
                 let b = (b0 >> (7 - lx)) & 1 | ((b1 >> (7 - lx)) & 1) << 1;
                 if b != 0 {
-                    self.line_buf[x - 8] = 0x40 + self.read_palette(attr << 2 | b);
+                    self.line_buf[x - 8] = 0x40 + read_palette(ctx, attr << 2 | b);
                 }
             }
 
@@ -236,7 +237,7 @@ impl Ppu {
         }
     }
 
-    pub fn render_spr(&mut self) {
+    pub fn render_spr(&mut self, ctx: &mut impl Context) {
         if !self.reg.sprite_visible {
             return;
         }
@@ -283,8 +284,8 @@ impl Ppu {
                 pat_addr + tile_index * 16 + y_ofs as u16
             };
 
-            let b0 = self.read_pattern(tile_addr);
-            let b1 = self.read_pattern(tile_addr + 8);
+            let b0 = read_pattern(ctx, tile_addr);
+            let b1 = read_pattern(ctx, tile_addr + 8);
 
             for lx in 0..8 {
                 let x = spr_x + if h_flip { 7 - lx } else { lx };
@@ -298,7 +299,7 @@ impl Ppu {
                         self.sprite0_hit[x] = true;
                     }
                     if !is_bg || self.line_buf[x] & 0x40 == 0 {
-                        self.line_buf[x] = self.read_palette(0x10 | upper | lo);
+                        self.line_buf[x] = read_palette(ctx, 0x10 | upper | lo);
                     }
                     self.line_buf[x] |= 0x80;
                 }
@@ -306,19 +307,7 @@ impl Ppu {
         }
     }
 
-    fn read_nametable(&self, addr: u16) -> u8 {
-        self.mapper.borrow_mut().read_chr(0x2000 + addr)
-    }
-
-    fn read_pattern(&self, addr: u16) -> u8 {
-        self.mapper.borrow_mut().read_chr(addr)
-    }
-
-    fn read_palette(&self, index: u8) -> u8 {
-        self.mapper.borrow_mut().read_chr(0x3f00 + index as u16)
-    }
-
-    pub fn read_reg(&mut self, addr: u16) -> u8 {
+    pub fn read(&mut self, ctx: &mut impl Context, addr: u16) -> u8 {
         let ret = match addr {
             2 => {
                 // Status
@@ -355,11 +344,11 @@ impl Ppu {
                 let addr = self.reg.cur_addr & 0x3fff;
 
                 let ret = if addr & 0x3f00 == 0x3f00 {
-                    self.reg.vram_read_buf = self.mapper.borrow_mut().read_chr(addr & !0x1000);
-                    self.mapper.borrow_mut().read_chr(addr)
+                    self.reg.vram_read_buf = ctx.read_chr(addr & !0x1000);
+                    ctx.read_chr(addr)
                 } else {
                     let ret = self.reg.vram_read_buf;
-                    self.reg.vram_read_buf = self.mapper.borrow_mut().read_chr(addr);
+                    self.reg.vram_read_buf = ctx.read_chr(addr);
                     ret
                 };
 
@@ -381,7 +370,7 @@ impl Ppu {
         ret
     }
 
-    pub fn write_reg(&mut self, addr: u16, data: u8) {
+    pub fn write(&mut self, ctx: &mut impl Context, addr: u16, data: u8) {
         self.reg.buf = data;
 
         match addr {
@@ -488,7 +477,7 @@ impl Ppu {
 
                 log::info!(target: "ppureg::PPUDATA", "= ${data:02X}, CHR[${addr:04X}] <- ${data:02X}");
 
-                self.mapper.borrow_mut().write_chr(addr, data);
+                ctx.write_chr(addr, data);
 
                 let inc_addr = if self.reg.ppu_addr_incr { 32 } else { 1 };
                 self.reg.cur_addr = self.reg.cur_addr.wrapping_add(inc_addr);
@@ -496,4 +485,16 @@ impl Ppu {
             _ => unreachable!(),
         }
     }
+}
+
+fn read_nametable(ctx: &mut impl Context, addr: u16) -> u8 {
+    ctx.read_chr(0x2000 + addr)
+}
+
+fn read_pattern(ctx: &mut impl Context, addr: u16) -> u8 {
+    ctx.read_chr(addr)
+}
+
+fn read_palette(ctx: &mut impl Context, index: u8) -> u8 {
+    ctx.read_chr(0x3f00 + index as u16)
 }

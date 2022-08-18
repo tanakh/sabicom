@@ -1,64 +1,59 @@
+use serde::{Deserialize, Serialize};
+
 use crate::{
-    apu::Apu,
-    mapper::Mapper,
-    ppu::Ppu,
+    context,
     rom::{Mirroring, Rom},
-    util::{Ref, Wire},
+    util::trait_alias,
 };
 
-use std::cell;
+trait_alias!(pub trait Context = context::Mapper + context::Ppu + context::Apu + context::Interrupt + context::Timing);
 
+#[derive(Serialize, Deserialize)]
 pub struct MemoryMap {
     ram: Vec<u8>,
-    ppu: Ref<Ppu>,
-    apu: Ref<Apu>,
-    mapper: Ref<dyn Mapper>,
-    wires: Wires,
-    pub cpu_stall: u64,
-}
-
-pub struct Wires {
-    pub apu_frame_irq_wire: Wire<bool>,
-    pub apu_dmc_irq_wire: Wire<bool>,
-    pub mapper_irq_wire: Wire<bool>,
-    pub cpu_irq_wire: Wire<bool>,
+    cpu_stall: u64,
 }
 
 impl MemoryMap {
-    pub fn new(ppu: Ref<Ppu>, apu: Ref<Apu>, mapper: Ref<dyn Mapper>, wires: Wires) -> Self {
+    pub fn new() -> Self {
         Self {
             ram: vec![0x00; 2 * 1024],
-            ppu,
-            apu,
-            mapper,
-            wires,
             cpu_stall: 0,
         }
     }
 
-    pub fn read(&self, addr: u16) -> u8 {
+    pub fn read(&self, ctx: &mut impl Context, addr: u16) -> u8 {
         match addr {
             0x0000..=0x1fff => self.ram[(addr & 0x7ff) as usize],
-            0x2000..=0x3fff => self.ppu.borrow_mut().read_reg(addr & 7),
-            0x4000..=0x4017 => self.apu.borrow_mut().read_reg(addr),
-            0x4018..=0xffff => self.mapper.borrow_mut().read_prg(addr),
+            0x2000..=0x3fff => ctx.read_ppu(addr & 7),
+            0x4000..=0x4017 => ctx.read_apu(addr),
+            0x4018..=0xffff => ctx.read_prg(addr),
         }
     }
 
-    pub fn write(&mut self, addr: u16, data: u8) {
+    pub fn read_pure(&self, ctx: &impl Context, addr: u16) -> Option<u8> {
+        Some(match addr {
+            0x0000..=0x1fff => self.ram[(addr & 0x7ff) as usize],
+            0x2000..=0x3fff => None?,
+            0x4000..=0x4017 => None?,
+            0x4018..=0xffff => ctx.read_prg(addr),
+        })
+    }
+
+    pub fn write(&mut self, ctx: &mut impl Context, addr: u16, data: u8) {
         match addr {
             0x0000..=0x1fff => self.ram[(addr & 0x7ff) as usize] = data,
-            0x2000..=0x3fff => self.ppu.borrow_mut().write_reg(addr & 7, data),
-            0x4000..=0x4013 | 0x4015..=0x4017 => self.apu.borrow_mut().write_reg(addr, data),
-            0x4018..=0xffff => self.mapper.borrow_mut().write_prg(addr, data),
+            0x2000..=0x3fff => ctx.write_ppu(addr & 7, data),
+            0x4000..=0x4013 | 0x4015..=0x4017 => ctx.write_apu(addr, data),
+            0x4018..=0xffff => ctx.write_prg(addr, data),
 
             0x4014 => {
                 // OAM DMA
                 let hi = (data as u16) << 8;
 
                 for lo in 0..0x100 {
-                    let b = self.read(hi | lo);
-                    self.write(0x2004, b);
+                    let data = self.read(ctx, hi | lo);
+                    self.write(ctx, 0x2004, data);
                 }
 
                 // FIXME: odd frame stall one more cycle
@@ -67,34 +62,27 @@ impl MemoryMap {
         }
     }
 
-    pub fn mapper(&self) -> cell::Ref<dyn Mapper> {
-        self.mapper.borrow()
-    }
-
-    pub fn tick(&mut self) {
+    pub fn tick(&mut self, ctx: &mut impl Context) {
         for _ in 0..3 {
-            self.ppu.borrow_mut().tick();
-            self.mapper.borrow_mut().tick();
+            ctx.tick_ppu();
+            ctx.tick_mapper();
         }
-        self.apu.borrow_mut().tick();
-        self.sync_wires();
+        ctx.tick_apu();
     }
 
-    fn sync_wires(&mut self) {
-        let output = self.wires.apu_frame_irq_wire.get()
-            || self.wires.apu_dmc_irq_wire.get()
-            || self.wires.mapper_irq_wire.get();
-        self.wires.cpu_irq_wire.set(output);
+    pub fn cpu_stall(&mut self) -> u64 {
+        let ret = self.cpu_stall;
+        self.cpu_stall = 0;
+        ret
     }
 }
 
+#[derive(Serialize, Deserialize)]
 pub struct MemoryController {
-    rom: Ref<Rom>,
-
     prg_ram: Vec<u8>,
     chr_ram: Vec<u8>,
 
-    nametable: [u8; 2 * 1024],
+    nametable: Vec<u8>,
     palette: [u8; 0x20],
 
     rom_page: [usize; 4],
@@ -103,15 +91,15 @@ pub struct MemoryController {
 }
 
 impl MemoryController {
-    pub fn new(rom: Ref<Rom>) -> Self {
-        assert!(!(rom.borrow().chr_ram_size > 0 && !rom.borrow().chr_rom.is_empty()));
+    pub fn new(rom: &Rom) -> Self {
+        assert!(!(rom.chr_ram_size > 0 && !rom.chr_rom.is_empty()));
 
-        let mirroring = rom.borrow().mirroring;
+        let mirroring = rom.mirroring;
 
-        let prg_ram = vec![0x00; rom.borrow().prg_ram_size];
-        let chr_ram = vec![0x00; rom.borrow().chr_ram_size];
+        let prg_ram = vec![0x00; rom.prg_ram_size];
+        let chr_ram = vec![0x00; rom.chr_ram_size];
 
-        let nametable = [0x00; 2 * 1024];
+        let nametable = vec![0x00; 2 * 1024];
 
         #[rustfmt::skip]
         let palette = [
@@ -122,7 +110,6 @@ impl MemoryController {
         ];
 
         let mut ret = Self {
-            rom,
             prg_ram,
             chr_ram,
             nametable,
@@ -133,11 +120,11 @@ impl MemoryController {
         };
 
         for i in 0..4 {
-            ret.map_prg(i, i);
+            ret.map_prg(rom, i, i);
         }
 
         for i in 0..8 {
-            ret.map_chr(i, i);
+            ret.map_chr(rom, i, i);
         }
 
         ret.set_mirroring(mirroring);
@@ -146,12 +133,12 @@ impl MemoryController {
     }
 
     /// Maps a PRG ROM page to a given 8KB bank
-    pub fn map_prg(&mut self, page: usize, bank: usize) {
-        self.rom_page[page] = (bank * 0x2000) % self.rom.borrow().prg_rom.len();
+    pub fn map_prg(&mut self, rom: &Rom, page: usize, bank: usize) {
+        self.rom_page[page] = (bank * 0x2000) % rom.prg_rom.len();
     }
 
-    pub fn prg_pages(&mut self) -> usize {
-        self.rom.borrow().prg_rom.len() / 0x2000
+    pub fn prg_pages(&mut self, rom: &Rom) -> usize {
+        rom.prg_rom.len() / 0x2000
     }
 
     pub fn get_prg_page(&self, page: usize) -> usize {
@@ -159,16 +146,16 @@ impl MemoryController {
     }
 
     /// Maps a CHR ROM page to a given 1KB bank
-    pub fn map_chr(&mut self, page: usize, bank: usize) {
-        if !self.rom.borrow().chr_rom.is_empty() {
-            self.chr_page[page] = (bank * 0x0400) % self.rom.borrow().chr_rom.len();
+    pub fn map_chr(&mut self, rom: &Rom, page: usize, bank: usize) {
+        if !rom.chr_rom.is_empty() {
+            self.chr_page[page] = (bank * 0x0400) % rom.chr_rom.len();
         } else {
-            self.chr_page[page] = (bank * 0x0400) % self.rom.borrow().chr_ram_size;
+            self.chr_page[page] = (bank * 0x0400) % rom.chr_ram_size;
         }
     }
 
-    pub fn chr_pages(&mut self) -> usize {
-        self.rom.borrow().chr_rom.len() / 0x0400
+    pub fn chr_pages(&mut self, rom: &Rom) -> usize {
+        rom.chr_rom.len() / 0x0400
     }
 
     pub fn map_nametable(&mut self, page: usize, bank: usize) {
@@ -207,7 +194,7 @@ impl MemoryController {
         }
     }
 
-    pub fn read_prg(&self, addr: u16) -> u8 {
+    pub fn read_prg(&self, rom: &Rom, addr: u16) -> u8 {
         match addr {
             0x6000..=0x7fff => {
                 let addr = addr & 0x1fff;
@@ -216,13 +203,13 @@ impl MemoryController {
             0x8000..=0xffff => {
                 let page = (addr & 0x7fff) / 0x2000;
                 let ix = self.rom_page[page as usize] + (addr & 0x1fff) as usize;
-                self.rom.borrow().prg_rom[ix]
+                rom.prg_rom[ix]
             }
             _ => 0,
         }
     }
 
-    pub fn write_prg(&mut self, addr: u16, data: u8) {
+    pub fn write_prg(&mut self, rom: &Rom, addr: u16, data: u8) {
         match addr {
             0x6000..=0x7fff => {
                 let addr = addr & 0x1fff;
@@ -235,7 +222,7 @@ impl MemoryController {
         }
     }
 
-    pub fn read_chr(&self, addr: u16) -> u8 {
+    pub fn read_chr(&self, rom: &Rom, addr: u16) -> u8 {
         log::trace!("Read CHR MEM: ${addr:04X}");
 
         match addr {
@@ -243,8 +230,8 @@ impl MemoryController {
                 let page = (addr / 0x0400) as usize;
                 let ix = self.chr_page[page] + (addr & 0x03ff) as usize;
 
-                if !self.rom.borrow().chr_rom.is_empty() {
-                    self.rom.borrow().chr_rom[ix]
+                if !rom.chr_rom.is_empty() {
+                    rom.chr_rom[ix]
                 } else {
                     self.chr_ram[ix]
                 }
@@ -263,7 +250,7 @@ impl MemoryController {
         }
     }
 
-    pub fn write_chr(&mut self, addr: u16, data: u8) {
+    pub fn write_chr(&mut self, rom: &Rom, addr: u16, data: u8) {
         log::trace!("Write CHR MEM: (${addr:04X}) = ${data:02X}");
 
         match addr {
@@ -271,7 +258,7 @@ impl MemoryController {
                 let page = (addr / 0x0400) as usize;
                 let ix = self.chr_page[page] + (addr & 0x03ff) as usize;
 
-                if !self.rom.borrow().chr_rom.is_empty() {
+                if !rom.chr_rom.is_empty() {
                     log::warn!("Write to CHR ROM: (${addr:04X}) = ${data:02X}");
                 } else {
                     self.chr_ram[ix] = data;

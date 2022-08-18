@@ -1,7 +1,3 @@
-use anyhow::{bail, Result};
-use bytesize::ByteSize;
-use prettytable::{cell, format, row, table};
-
 pub struct Rom {
     pub format: RomFormat,
     pub mapper_id: u16,
@@ -17,6 +13,27 @@ pub struct Rom {
     pub console_type: ConsoleType,
     pub timing_mode: TimingMode,
     pub has_battery: bool,
+}
+
+impl Default for Rom {
+    fn default() -> Self {
+        Self {
+            format: RomFormat::INes,
+            mapper_id: 0,
+            submapper_id: 0,
+            prg_rom: vec![],
+            chr_rom: vec![],
+            trainer: None,
+            prg_ram_size: 0,
+            prg_nvram_size: 0,
+            chr_ram_size: 0,
+            chr_nvram_size: 0,
+            mirroring: Mirroring::Vertical,
+            console_type: ConsoleType::Nes,
+            timing_mode: TimingMode::Ntsc,
+            has_battery: false,
+        }
+    }
 }
 
 pub enum RomFormat {
@@ -49,14 +66,24 @@ pub enum TimingMode {
     Dendy,
 }
 
+#[derive(thiserror::Error, Debug)]
+pub enum RomError {
+    #[error("invalid ROM magic: {0:?}, expected: 'NES\x1a'")]
+    InvalidMagic([u8; 4]),
+    #[error("Invalid mirroring: {0}")]
+    InvalidMirroring(u8),
+    #[error("ROM data has invalid extra bytes")]
+    InvalidExtraBytes,
+}
+
 impl Rom {
-    pub fn from_bytes(dat: &[u8]) -> Result<Self> {
+    pub fn from_bytes(dat: &[u8]) -> Result<Self, RomError> {
         let header = &dat[..0x10];
         let mut dat = &dat[0x10..];
 
         let magic = &header[0..4];
         if magic != b"NES\x1a" {
-            bail!("Not a valid NES ROM file");
+            Err(RomError::InvalidMagic(magic.try_into().unwrap()))?;
         }
 
         let is_nes2 = header[7] & 0x0C == 0x08;
@@ -81,7 +108,7 @@ impl Rom {
             0 => Mirroring::Horizontal,
             1 => Mirroring::Vertical,
             8 => Mirroring::FourScreen,
-            _ => bail!("Invalid mirroring: {}", header[6] & 0x09),
+            _ => Err(RomError::InvalidMirroring(header[6] & 0x09))?,
         };
 
         let has_battery = header[6] & 0x02 != 0;
@@ -208,7 +235,7 @@ impl Rom {
         dat = &dat[chr_rom_size..];
 
         if !dat.is_empty() {
-            bail!("ROM data has invalid extra bytes");
+            Err(RomError::InvalidExtraBytes)?;
         }
 
         let format = if is_nes2 {
@@ -233,51 +260,5 @@ impl Rom {
             chr_ram_size,
             chr_nvram_size,
         })
-    }
-
-    pub fn print_info(&self) {
-        if !log::log_enabled!(log::Level::Info) {
-            return;
-        }
-
-        let to_si = |x| ByteSize(x as _).to_string_as(true);
-        let yn = |b| if b { "Yes" } else { "No" };
-
-        let prg_chr_crc32 = {
-            let mut hasher = crc32fast::Hasher::new();
-            hasher.update(&self.prg_rom);
-            hasher.update(&self.chr_rom);
-            hasher.finalize()
-        };
-        let prg_rom_crc32 = crc32fast::hash(&self.prg_rom);
-        let chr_rom_crc32 = crc32fast::hash(&self.chr_rom);
-
-        let mut table = table! {
-            [ "ROM Format",
-                match self.format {
-                    RomFormat::INes => "iNES",
-                    RomFormat::Nes20 => "NES 2.0",
-                }
-            ],
-            [ "Mapper ID", format!("{} ({})", self.mapper_id, self.submapper_id) ],
-            [ "Mirroring", format!("{:?}", self.mirroring) ],
-            [ "Console Type", format!("{:?}", self.console_type) ],
-            [ "Timing Mode", format!("{:?}", self.timing_mode) ],
-            [ "Battery", yn(self.has_battery) ],
-            [ "Trainer", yn(self.trainer.is_some()) ],
-            [ "PRG ROM Size", to_si(self.prg_rom.len()) ],
-            [ "CHR ROM Size", to_si(self.chr_rom.len()) ],
-            [ "PRG RAM Size", to_si(self.prg_ram_size) ],
-            [ "PRG NVRAM Size", to_si(self.prg_nvram_size) ],
-            [ "CHR RAM Size", to_si(self.chr_ram_size) ],
-            [ "CHR NVRAM Size", to_si(self.chr_nvram_size) ],
-            [ "PRG+CHR CRC32", format!("{prg_chr_crc32:08X}") ],
-            [ "PRG ROM CRC32", format!("{prg_rom_crc32:08X}") ],
-            [ "CHR ROM CRC32", format!("{chr_rom_crc32:08X}") ]
-        };
-
-        table.set_titles(row!["ROM File Info"]);
-        table.set_format(*format::consts::FORMAT_NO_LINESEP_WITH_TITLE);
-        log::info!("\n{}", table);
     }
 }

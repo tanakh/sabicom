@@ -3,20 +3,18 @@ name = "sabicom"
 version = "0.1.0"
 edition = "2021"
 
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
-
 [dependencies]
-anyhow = "1.0.52"
-argopt = "0.2.0"
-biquad = "0.4.2"
-bitvec = "1.0.0"
+meru-interface = "0.1.0"
+
+ambassador = "0.3.2"
+bincode = "1.3.3"
+bitvec = "1.0.1"
 bytesize = "1.1.0"
-chrono = "0.4.19"
-crc32fast = "1.3.0"
-env_logger = "0.9.0"
-log = "0.4.14"
-prettytable-rs = "0.8.0"
-sdl2 = { version = "0.35.1", features = ["ttf"] }
+chrono = "0.4.22"
+crc32fast = "1.3.2"
+log = "0.4.17"
+serde = "1.0.143"
+thiserror = "1.0.32"
 
 [dev-dependencies]
-once_cell = "1.9.0"
+once_cell = "1.13.1"

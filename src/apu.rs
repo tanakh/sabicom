@@ -1,11 +1,14 @@
+use bitvec::prelude::*;
+use meru_interface::{AudioBuffer, AudioSample};
+use serde::{Deserialize, Serialize};
+
 use crate::{
     consts::{LINES_PER_FRAME, PPU_CLOCK_PER_CPU_CLOCK, PPU_CLOCK_PER_LINE},
-    mapper::Mapper,
-    util::{Input, Ref, Wire},
+    context::{self, IrqSource},
+    util::{trait_alias, Input},
 };
 
-use bitvec::prelude::*;
-use std::collections::VecDeque;
+trait_alias!(pub trait Context = context::Mapper + context::Interrupt);
 
 const AUDIO_FREQUENCY: u64 = 48000;
 const SAMPLE_PER_FRAME: u64 = AUDIO_FREQUENCY / 60;
@@ -17,6 +20,7 @@ const LENGTH_TABLE: [u8; 32] = [
     12, 16, 24, 18, 48, 20, 96, 22, 192, 24, 72, 26, 16, 28, 32, 30,
 ];
 
+#[derive(Serialize, Deserialize)]
 pub struct Apu {
     controller_latch: bool,
     expansion_latch: u8,
@@ -27,13 +31,11 @@ pub struct Apu {
     input: Input,
     counter: u64,
     sampler_counter: u64,
-    mapper: Ref<dyn Mapper>,
-    frame_irq_wire: Wire<bool>,
-    dmc_irq_wire: Wire<bool>,
-    pub audio_buf: VecDeque<i16>,
+    #[serde(skip)]
+    audio_buffer: AudioBuffer,
 }
 
-#[derive(Default)]
+#[derive(Default, Serialize, Deserialize)]
 struct Register {
     pulse: [Pulse; 2],
     triangle: Triangle,
@@ -54,7 +56,7 @@ impl Register {
     }
 }
 
-#[derive(Default, Debug)]
+#[derive(Default, Debug, Serialize, Deserialize)]
 struct Pulse {
     enable: bool,
     duty: u8,
@@ -78,7 +80,7 @@ struct Pulse {
     phase: u8,
 }
 
-#[derive(Default)]
+#[derive(Default, Serialize, Deserialize)]
 struct Triangle {
     enable: bool,
     length_counter_halt: bool,
@@ -93,7 +95,7 @@ struct Triangle {
     sequencer_counter: u16,
 }
 
-#[derive(Default, Debug)]
+#[derive(Default, Debug, Serialize, Deserialize)]
 struct Noise {
     enable: bool,
     length_counter_halt: bool,
@@ -120,7 +122,7 @@ impl Noise {
     }
 }
 
-#[derive(Default, Debug)]
+#[derive(Default, Debug, Serialize, Deserialize)]
 struct Dmc {
     enable: bool,
     irq_enabled: bool,
@@ -149,11 +151,7 @@ impl Dmc {
 }
 
 impl Apu {
-    pub fn new(
-        mapper: Ref<dyn Mapper>,
-        frame_irq_wire: Wire<bool>,
-        dmc_irq_wire: Wire<bool>,
-    ) -> Self {
+    pub fn new() -> Self {
         Self {
             controller_latch: false,
             expansion_latch: 0,
@@ -164,14 +162,19 @@ impl Apu {
             counter: 0,
             sampler_counter: 0,
             input: Input::default(),
-            mapper,
-            frame_irq_wire,
-            dmc_irq_wire,
-            audio_buf: VecDeque::new(),
+            audio_buffer: AudioBuffer::new(48000, 2),
         }
     }
 
-    pub fn tick(&mut self) {
+    pub fn audio_buffer(&self) -> &AudioBuffer {
+        &self.audio_buffer
+    }
+
+    pub fn audio_buffer_mut(&mut self) -> &mut AudioBuffer {
+        &mut self.audio_buffer
+    }
+
+    pub fn tick(&mut self, ctx: &mut impl Context) {
         self.frame_counter += 1;
 
         let mut quarter_frame = false;
@@ -193,7 +196,7 @@ impl Apu {
 
             if !self.reg.frame_counter_irq {
                 // log::info!("APU frame counter IRQ set");
-                self.frame_irq_wire.set(true);
+                ctx.set_irq_source(IrqSource::ApuFrame, true);
             }
 
             self.frame_counter = 0;
@@ -306,7 +309,7 @@ impl Apu {
             }
 
             if r.buffer.is_none() && r.length_counter != 0 {
-                r.buffer = Some(self.mapper.borrow_mut().read_prg(r.cur_addr));
+                r.buffer = Some(ctx.read_prg(r.cur_addr));
 
                 r.cur_addr = r.cur_addr.wrapping_add(1);
                 if r.cur_addr == 0 {
@@ -318,7 +321,7 @@ impl Apu {
                         r.cur_addr = r.sample_addr;
                         r.length_counter = r.sample_length;
                     } else if r.irq_enabled {
-                        self.dmc_irq_wire.set(true);
+                        ctx.set_irq_source(IrqSource::ApuDmc, true);
                     }
                 }
             }
@@ -329,7 +332,10 @@ impl Apu {
         self.sampler_counter += SAMPLE_PER_FRAME * PPU_CLOCK_PER_CPU_CLOCK;
         if self.sampler_counter >= PPU_CLOCK_PER_LINE * LINES_PER_FRAME as u64 {
             self.sampler_counter -= PPU_CLOCK_PER_LINE * LINES_PER_FRAME as u64;
-            self.audio_buf.push_back(self.sample());
+            let sample = self.sample();
+            self.audio_buffer
+                .samples
+                .push(AudioSample::new(sample, sample));
         }
     }
 
@@ -505,21 +511,21 @@ impl Apu {
         self.input = input.clone();
     }
 
-    pub fn read_reg(&mut self, addr: u16) -> u8 {
+    pub fn read(&mut self, ctx: &mut impl Context, addr: u16) -> u8 {
         let ret = match addr {
             0x4015 => {
                 // Status
                 let mut ret = 0;
                 let r = ret.view_bits_mut::<Lsb0>();
-                r.set(7, self.dmc_irq_wire.get());
-                r.set(6, self.frame_irq_wire.get());
+                r.set(7, ctx.irq_source(IrqSource::ApuDmc));
+                r.set(6, ctx.irq_source(IrqSource::ApuFrame));
                 r.set(4, self.reg.dmc.length_counter > 0);
                 r.set(3, self.reg.noise.length_counter > 0);
                 r.set(2, self.reg.triangle.length_counter > 0);
                 r.set(1, self.reg.pulse[1].length_counter > 0);
                 r.set(0, self.reg.pulse[0].length_counter > 0);
 
-                self.frame_irq_wire.set(false);
+                ctx.set_irq_source(IrqSource::ApuFrame, false);
                 ret
             }
 
@@ -544,7 +550,7 @@ impl Apu {
         ret
     }
 
-    pub fn write_reg(&mut self, addr: u16, data: u8) {
+    pub fn write(&mut self, ctx: &mut impl Context, addr: u16, data: u8) {
         log::trace!("Write APU ${addr:04X} = ${data:02X}");
 
         match addr {
@@ -675,7 +681,7 @@ impl Apu {
                 r.loop_enabled = v[6];
                 r.rate_index = v[0..4].load();
                 if !r.irq_enabled {
-                    self.dmc_irq_wire.set(false);
+                    ctx.set_irq_source(IrqSource::ApuDmc, false);
                 }
             }
             0x4011 => {
@@ -722,7 +728,7 @@ impl Apu {
                     }
                 }
 
-                self.dmc_irq_wire.set(false);
+                ctx.set_irq_source(IrqSource::ApuDmc, false);
             }
 
             0x4016 => {
@@ -750,7 +756,7 @@ impl Apu {
                 self.reg.frame_counter_irq = v[6];
 
                 if self.reg.frame_counter_irq {
-                    self.frame_irq_wire.set(false);
+                    ctx.set_irq_source(IrqSource::ApuFrame, false);
                 }
 
                 self.frame_counter_reset_delay = 3;

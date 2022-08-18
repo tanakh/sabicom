@@ -1,148 +1,228 @@
+use bytesize::ByteSize;
+use meru_interface::{ConfigUi, CoreInfo, EmulatorCore, KeyConfig};
+use serde::{Deserialize, Serialize};
+
 use crate::{
-    apu::Apu,
-    consts::*,
-    cpu::{self, Cpu},
-    mapper::{create_mapper, Mapper},
-    memory::{self, MemoryMap},
-    ppu::{self, Ppu},
-    rom::Rom,
-    util::{clone_ref, wrap_ref, FrameBuffer, Input, Ref, Wire},
+    consts, context,
+    rom::{self, RomError, RomFormat},
+    util::{Input, Pad},
 };
 
 pub struct Nes {
-    pub cpu: Cpu,
-    ppu: Ref<Ppu>,
-    apu: Ref<Apu>,
-    pub mem: Ref<MemoryMap>,
-    mapper: Ref<dyn Mapper>,
-    rom: Ref<Rom>,
-    frame_buf: FrameBuffer,
-    audio_buf: Vec<i16>,
-    wires: Wires,
+    ctx: context::Context,
 }
 
-pub struct Wires {
-    nmi_wire: Wire<bool>,
-    rst_wire: Wire<bool>,
-    apu_frame_irq_wire: Wire<bool>,
-    apu_dmc_irq_wire: Wire<bool>,
-    mapper_irq_wire: Wire<bool>,
-    cpu_irq_wire: Wire<bool>,
-}
+#[derive(Default, Serialize, Deserialize)]
+pub struct Config {}
 
-impl Wires {
-    fn new() -> Self {
-        Self {
-            nmi_wire: Wire::new(false),
-            rst_wire: Wire::new(false),
-            apu_frame_irq_wire: Wire::new(false),
-            apu_dmc_irq_wire: Wire::new(false),
-            mapper_irq_wire: Wire::new(false),
-            cpu_irq_wire: Wire::new(false),
-        }
+impl ConfigUi for Config {
+    fn ui(&mut self, ui: &mut impl meru_interface::Ui) {
+        ui.label("No config options");
     }
 }
 
-pub struct State {}
+#[derive(thiserror::Error, Debug)]
+pub enum Error {
+    #[error("{0}")]
+    RomError(#[from] RomError),
+    #[error("unsupported mapper: {0}")]
+    UnsupportedMapper(u16),
+    #[error("{0}")]
+    DeserializeFailed(#[from] bincode::Error),
+}
 
-impl Nes {
-    pub fn new(rom: Rom, _sram: Option<Vec<u8>>) -> Self {
-        let rom = wrap_ref(rom);
-        let wires = Wires::new();
+const CORE_INFO: &'static CoreInfo = &CoreInfo {
+    system_name: "NES (Sabicom)",
+    abbrev: "nes",
+    file_extensions: &["nes"],
+};
 
-        let mapper = create_mapper(clone_ref(&rom), wires.mapper_irq_wire.clone());
+fn default_key_config() -> KeyConfig {
+    use meru_interface::key_assign::*;
 
-        // FIXME: irq wire connect to or gate
+    #[rustfmt::skip]
+    let keys = vec![
+        ("Up", any!(keycode!(Up), pad_button!(0, DPadUp))),
+        ("Down", any!(keycode!(Down), pad_button!(0, DPadDown))),
+        ("Left", any!(keycode!(Left), pad_button!(0, DPadLeft))),
+        ("Right", any!(keycode!(Right), pad_button!(0, DPadRight))),
+        ("A", any!(keycode!(X), pad_button!(0, South))),
+        ("B", any!(keycode!(Z), pad_button!(0, West))),
+        ("Start", any!(keycode!(Return), pad_button!(0, Start))),
+        ("Select", any!(keycode!(RShift), pad_button!(0, Select))),
+    ];
 
-        let ppu = wrap_ref(Ppu::new(
-            clone_ref(&mapper),
-            ppu::Wires {
-                nmi: wires.nmi_wire.clone(),
-            },
-        ));
-        let apu = wrap_ref(Apu::new(
-            clone_ref(&mapper),
-            wires.apu_frame_irq_wire.clone(),
-            wires.apu_dmc_irq_wire.clone(),
-        ));
+    let empty = vec![
+        ("Up", KeyAssign::default()),
+        ("Down", KeyAssign::default()),
+        ("Left", KeyAssign::default()),
+        ("Right", KeyAssign::default()),
+        ("A", KeyAssign::default()),
+        ("B", KeyAssign::default()),
+        ("Start", KeyAssign::default()),
+        ("Select", KeyAssign::default()),
+    ];
 
-        let mem = wrap_ref(MemoryMap::new(
-            clone_ref(&ppu),
-            clone_ref(&apu),
-            clone_ref(&mapper),
-            memory::Wires {
-                apu_frame_irq_wire: wires.apu_frame_irq_wire.clone(),
-                apu_dmc_irq_wire: wires.apu_dmc_irq_wire.clone(),
-                mapper_irq_wire: wires.mapper_irq_wire.clone(),
-                cpu_irq_wire: wires.cpu_irq_wire.clone(),
-            },
-        ));
-        let cpu = Cpu::new(
-            clone_ref(&mem),
-            cpu::Wires {
-                nmi: wires.nmi_wire.clone(),
-                irq: wires.cpu_irq_wire.clone(),
-                rst: wires.rst_wire.clone(),
-            },
-        );
+    KeyConfig {
+        controllers: [keys, empty]
+            .into_iter()
+            .map(|v| v.into_iter().map(|(k, a)| (k.to_string(), a)).collect())
+            .collect(),
+    }
+}
 
-        let frame_buf = FrameBuffer::new(SCREEN_WIDTH, SCREEN_HEIGHT);
+impl EmulatorCore for Nes {
+    type Config = Config;
+    type Error = Error;
 
-        Self {
-            rom,
-            ppu,
-            apu,
-            cpu,
-            mem,
-            mapper,
-            frame_buf,
-            audio_buf: vec![],
-            wires,
+    fn core_info() -> &'static meru_interface::CoreInfo {
+        &CORE_INFO
+    }
+
+    fn try_from_file(
+        data: &[u8],
+        backup: Option<&[u8]>,
+        _config: &Self::Config,
+    ) -> Result<Self, Self::Error>
+    where
+        Self: Sized,
+    {
+        use context::Cpu;
+        let rom = rom::Rom::from_bytes(data)?;
+        let mut ctx = context::Context::new(rom, backup.map(|r| r.to_vec()))?;
+        ctx.reset_cpu();
+        Ok(Self { ctx })
+    }
+
+    fn game_info(&self) -> Vec<(String, String)> {
+        use context::Rom;
+        let rom = self.ctx.rom();
+
+        let to_si = |x| ByteSize(x as _).to_string_as(true);
+        let yn = |b| if b { "Yes" } else { "No" };
+
+        let prg_chr_crc32 = {
+            let mut hasher = crc32fast::Hasher::new();
+            hasher.update(&rom.prg_rom);
+            hasher.update(&rom.chr_rom);
+            hasher.finalize()
+        };
+        let prg_rom_crc32 = crc32fast::hash(&rom.prg_rom);
+        let chr_rom_crc32 = crc32fast::hash(&rom.chr_rom);
+
+        let ret = vec![
+            (
+                "ROM Format",
+                match &rom.format {
+                    RomFormat::INes => "iNES",
+                    RomFormat::Nes20 => "NES 2.0",
+                }
+                .to_string(),
+            ),
+            (
+                "Mapper ID",
+                format!("{} ({})", rom.mapper_id, rom.submapper_id),
+            ),
+            ("Mirroring", format!("{:?}", rom.mirroring)),
+            ("Console Type", format!("{:?}", rom.console_type)),
+            ("Timing Mode", format!("{:?}", rom.timing_mode)),
+            ("Battery", yn(rom.has_battery).to_string()),
+            ("Trainer", yn(rom.trainer.is_some()).to_string()),
+            ("PRG ROM Size", to_si(rom.prg_rom.len())),
+            ("CHR ROM Size", to_si(rom.chr_rom.len())),
+            ("PRG RAM Size", to_si(rom.prg_ram_size)),
+            ("PRG NVRAM Size", to_si(rom.prg_nvram_size)),
+            ("CHR RAM Size", to_si(rom.chr_ram_size)),
+            ("CHR NVRAM Size", to_si(rom.chr_nvram_size)),
+            ("PRG+CHR CRC32", format!("{prg_chr_crc32:08X}")),
+            ("PRG ROM CRC32", format!("{prg_rom_crc32:08X}")),
+            ("CHR ROM CRC32", format!("{chr_rom_crc32:08X}")),
+        ];
+
+        ret.into_iter().map(|(k, v)| (k.to_string(), v)).collect()
+    }
+
+    fn set_config(&mut self, _config: &Self::Config) {}
+
+    fn exec_frame(&mut self, render_graphics: bool) {
+        use context::{Apu, Cpu, Ppu};
+
+        self.ctx.apu_mut().audio_buffer_mut().samples.clear();
+        self.ctx
+            .ppu_mut()
+            .frame_buffer_mut()
+            .resize(consts::SCREEN_WIDTH, consts::SCREEN_HEIGHT);
+
+        let frame = self.ctx.ppu().frame();
+        while frame == self.ctx.ppu().frame() {
+            self.ctx.tick_cpu();
         }
     }
 
-    pub fn reset(&mut self) {
-        todo!("reset")
+    fn reset(&mut self) {
+        todo!()
     }
 
-    pub fn exec_frame(&mut self) {
-        let frame = self.ppu.borrow().frame();
-
-        while frame == self.ppu.borrow().frame() {
-            self.cpu.tick();
-        }
+    fn frame_buffer(&self) -> &meru_interface::FrameBuffer {
+        use context::Ppu;
+        self.ctx.ppu().frame_buffer()
     }
 
-    pub fn set_input(&mut self, input: &Input) {
-        self.apu.borrow_mut().set_input(input);
+    fn audio_buffer(&self) -> &meru_interface::AudioBuffer {
+        use context::Apu;
+        self.ctx.apu().audio_buffer()
     }
 
-    pub fn get_frame_buf(&mut self) -> &FrameBuffer {
-        self.frame_buf
-            .buf
-            .copy_from_slice(&self.ppu.borrow().frame_buf.buf);
+    fn default_key_config() -> meru_interface::KeyConfig {
+        default_key_config()
+    }
 
-        {
-            let mut apu = self.apu.borrow_mut();
-            self.audio_buf.resize(apu.audio_buf.len(), 0);
-            for i in 0..self.audio_buf.len() {
-                self.audio_buf[i] = apu.audio_buf[i];
+    fn set_input(&mut self, input: &meru_interface::InputData) {
+        let mut pad: [Pad; 2] = Default::default();
+
+        for i in 0..2 {
+            let mut pad = &mut pad[i];
+            for (key, value) in &input.controllers[i] {
+                match key.as_str() {
+                    "Up" => pad.up = *value,
+                    "Down" => pad.down = *value,
+                    "Left" => pad.left = *value,
+                    "Right" => pad.right = *value,
+                    "A" => pad.a = *value,
+                    "B" => pad.b = *value,
+                    "Start" => pad.start = *value,
+                    "Select" => pad.select = *value,
+                    _ => (),
+                }
             }
-            apu.audio_buf.clear();
         }
 
-        &self.frame_buf
+        use context::Apu;
+        self.ctx.apu_mut().set_input(&Input { pad });
     }
 
-    pub fn get_audio_buf(&self) -> &[i16] {
-        &self.audio_buf
+    fn backup(&self) -> Option<Vec<u8>> {
+        // TODO
+        None
     }
 
-    pub fn save_state(&self) -> State {
-        todo!("save state")
+    fn save_state(&self) -> Vec<u8> {
+        bincode::serialize(&self.ctx).unwrap()
     }
 
-    pub fn load_state(&mut self, state: State) {
-        todo!("load state")
+    fn load_state(&mut self, data: &[u8]) -> Result<(), Self::Error> {
+        use context::{Apu, Ppu, Rom};
+        let mut ctx: context::Context = bincode::deserialize(data)?;
+        std::mem::swap(ctx.rom_mut(), self.ctx.rom_mut());
+        std::mem::swap(
+            ctx.ppu_mut().frame_buffer_mut(),
+            self.ctx.ppu_mut().frame_buffer_mut(),
+        );
+        std::mem::swap(
+            ctx.apu_mut().audio_buffer_mut(),
+            self.ctx.apu_mut().audio_buffer_mut(),
+        );
+        self.ctx = ctx;
+        Ok(())
     }
 }
