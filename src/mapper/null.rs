@@ -24,7 +24,7 @@ impl super::MapperTrait for NullMapper {
         self.ctrl.write_prg(ctx.rom(), addr, data);
     }
 
-    fn read_chr(&self, ctx: &impl super::Context, addr: u16) -> u8 {
+    fn read_chr(&mut self, ctx: &mut impl super::Context, addr: u16) -> u8 {
         self.ctrl.read_chr(ctx.rom(), addr)
     }
 

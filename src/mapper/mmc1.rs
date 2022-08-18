@@ -1,9 +1,11 @@
+use serde::{Deserialize, Serialize};
+
 use crate::{
     memory::MemoryController,
     rom::{Mirroring, Rom},
-    util::Ref,
 };
 
+#[derive(Serialize, Deserialize)]
 pub struct Mmc1 {
     prg_rom_bank_mode: PrgRomBankMode,
     chr_rom_bank_mode: ChrRomBankMode,
@@ -12,25 +14,27 @@ pub struct Mmc1 {
     ctrl: MemoryController,
 }
 
+#[derive(Serialize, Deserialize)]
 enum PrgRomBankMode {
     Switch32K,
     Switch16KLow,
     Switch16KHigh,
 }
 
+#[derive(Serialize, Deserialize)]
 enum ChrRomBankMode {
     Switch8K,
     Switch4K,
 }
 
 impl Mmc1 {
-    pub fn new(rom: Ref<Rom>) -> Self {
+    pub fn new(rom: &Rom) -> Self {
         let mut ctrl = MemoryController::new(rom);
-        let prg_pages = ctrl.prg_pages();
-        ctrl.map_prg(0, 0);
-        ctrl.map_prg(1, 1);
-        ctrl.map_prg(2, prg_pages - 2);
-        ctrl.map_prg(3, prg_pages - 1);
+        let prg_pages = ctrl.prg_pages(rom);
+        ctrl.map_prg(rom, 0, 0);
+        ctrl.map_prg(rom, 1, 1);
+        ctrl.map_prg(rom, 2, prg_pages - 2);
+        ctrl.map_prg(rom, 3, prg_pages - 1);
 
         Self {
             prg_rom_bank_mode: PrgRomBankMode::Switch16KLow,
@@ -42,18 +46,14 @@ impl Mmc1 {
     }
 }
 
-impl super::Mapper for Mmc1 {
-    fn read_prg(&mut self, addr: u16) -> u8 {
-        self.ctrl.read_prg(addr)
+impl super::MapperTrait for Mmc1 {
+    fn read_prg(&self, ctx: &impl super::Context, addr: u16) -> u8 {
+        self.ctrl.read_prg(ctx.rom(), addr)
     }
 
-    fn read_chr(&mut self, addr: u16) -> u8 {
-        self.ctrl.read_chr(addr)
-    }
-
-    fn write_prg(&mut self, addr: u16, data: u8) {
+    fn write_prg(&mut self, ctx: &mut impl super::Context, addr: u16, data: u8) {
         if addr & 0x8000 == 0 {
-            return self.ctrl.write_prg(addr, data);
+            return self.ctrl.write_prg(ctx.rom(), addr, data);
         }
 
         log::trace!("MMC1: {addr:04X} <- {data:02X}");
@@ -107,24 +107,24 @@ impl super::Mapper for Mmc1 {
                 ChrRomBankMode::Switch8K => {
                     let page = (cmd >> 1) as usize;
                     for i in 0..8 {
-                        self.ctrl.map_chr(i, page as usize * 8 + i);
+                        self.ctrl.map_chr(ctx.rom(), i, page as usize * 8 + i);
                     }
                 }
                 ChrRomBankMode::Switch4K => {
                     let page = cmd as usize;
                     for i in 0..4 {
-                        self.ctrl.map_chr(i, page as usize * 4 + i);
+                        self.ctrl.map_chr(ctx.rom(), i, page as usize * 4 + i);
                     }
                 }
             },
             2 => match self.chr_rom_bank_mode {
                 ChrRomBankMode::Switch8K => {
-                    log::warn!("MMC1: High CHR page set on 8K CHR mode");
+                    log::info!("MMC1: High CHR page set on 8K CHR mode");
                 }
                 ChrRomBankMode::Switch4K => {
                     let page = cmd as usize;
                     for i in 0..4 {
-                        self.ctrl.map_chr(i + 4, page as usize * 4 + i);
+                        self.ctrl.map_chr(ctx.rom(), i + 4, page as usize * 4 + i);
                     }
                 }
             },
@@ -132,24 +132,24 @@ impl super::Mapper for Mmc1 {
                 PrgRomBankMode::Switch32K => {
                     let page = (cmd as usize & 0x0f) >> 1;
                     for i in 0..4 {
-                        self.ctrl.map_prg(i, page * 4 + i);
+                        self.ctrl.map_prg(ctx.rom(), i, page * 4 + i);
                     }
                 }
                 PrgRomBankMode::Switch16KLow => {
                     let page = cmd as usize & 0x0f;
-                    let prg_pages = self.ctrl.prg_pages();
+                    let prg_pages = self.ctrl.prg_pages(ctx.rom());
                     for i in 0..2 {
-                        self.ctrl.map_prg(i, page * 2 + i);
+                        self.ctrl.map_prg(ctx.rom(), i, page * 2 + i);
                     }
-                    self.ctrl.map_prg(2, prg_pages - 2);
-                    self.ctrl.map_prg(3, prg_pages - 1);
+                    self.ctrl.map_prg(ctx.rom(), 2, prg_pages - 2);
+                    self.ctrl.map_prg(ctx.rom(), 3, prg_pages - 1);
                 }
                 PrgRomBankMode::Switch16KHigh => {
                     let page = cmd as usize & 0x0f;
-                    self.ctrl.map_prg(0, 0);
-                    self.ctrl.map_prg(1, 1);
+                    self.ctrl.map_prg(ctx.rom(), 0, 0);
+                    self.ctrl.map_prg(ctx.rom(), 1, 1);
                     for i in 0..2 {
-                        self.ctrl.map_prg(i + 2, page * 2 + i);
+                        self.ctrl.map_prg(ctx.rom(), i + 2, page * 2 + i);
                     }
                 }
             },
@@ -157,11 +157,15 @@ impl super::Mapper for Mmc1 {
         }
     }
 
-    fn write_chr(&mut self, addr: u16, data: u8) {
-        self.ctrl.write_chr(addr, data);
+    fn read_chr(&mut self, ctx: &mut impl super::Context, addr: u16) -> u8 {
+        self.ctrl.read_chr(ctx.rom(), addr)
     }
 
-    fn get_prg_page(&self, page: usize) -> usize {
-        self.ctrl.get_prg_page(page)
+    fn write_chr(&mut self, ctx: &mut impl super::Context, addr: u16, data: u8) {
+        self.ctrl.write_chr(ctx.rom(), addr, data);
+    }
+
+    fn prg_page(&self, page: u16) -> u16 {
+        self.ctrl.prg_page(page)
     }
 }

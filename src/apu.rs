@@ -542,7 +542,7 @@ impl Apu {
             }
 
             _ => {
-                log::warn!("Read APU ${addr:04X}");
+                log::info!("Read APU ${addr:04X}");
                 0
             }
         };

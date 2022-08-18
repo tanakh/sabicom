@@ -141,8 +141,8 @@ impl MemoryController {
         rom.prg_rom.len() / 0x2000
     }
 
-    pub fn get_prg_page(&self, page: usize) -> usize {
-        self.rom_page[page] / 0x2000
+    pub fn prg_page(&self, page: u16) -> u16 {
+        (self.rom_page[page as usize] / 0x2000) as u16
     }
 
     /// Maps a CHR ROM page to a given 1KB bank

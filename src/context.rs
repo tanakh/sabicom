@@ -48,7 +48,7 @@ pub trait Apu {
 pub trait Mapper {
     fn read_prg(&self, addr: u16) -> u8;
     fn write_prg(&mut self, addr: u16, data: u8);
-    fn read_chr(&self, addr: u16) -> u8;
+    fn read_chr(&mut self, addr: u16) -> u8;
     fn write_chr(&mut self, addr: u16, data: u8);
     fn prg_page(&self, page: u16) -> u16;
     fn tick_mapper(&mut self);
@@ -205,9 +205,9 @@ impl Mapper for Inner3 {
         self.mapper.write_prg(&mut self.inner, addr, data);
     }
 
-    fn read_chr(&self, addr: u16) -> u8 {
+    fn read_chr(&mut self, addr: u16) -> u8 {
         use mapper::MapperTrait;
-        self.mapper.read_chr(&self.inner, addr)
+        self.mapper.read_chr(&mut self.inner, addr)
     }
 
     fn write_chr(&mut self, addr: u16, data: u8) {

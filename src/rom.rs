@@ -1,3 +1,5 @@
+use serde::{Deserialize, Serialize};
+
 pub struct Rom {
     pub format: RomFormat,
     pub mapper_id: u16,
@@ -41,7 +43,7 @@ pub enum RomFormat {
     Nes20,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Mirroring {
     OneScreenLow,
     OneScreenHigh,

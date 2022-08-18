@@ -4,34 +4,54 @@ mod mmc3;
 mod null;
 mod unrom;
 
-use crate::{
-    rom::Rom,
-    util::{wrap_ref, Ref, Wire},
-};
+use ambassador::{delegatable_trait, Delegate};
+use serde::{Deserialize, Serialize};
 
-pub trait Mapper {
-    fn read_prg(&mut self, addr: u16) -> u8;
-    fn write_prg(&mut self, addr: u16, data: u8);
+use crate::{context, nes::Error, rom::Rom, util::trait_alias};
 
-    fn read_chr(&mut self, addr: u16) -> u8;
-    fn write_chr(&mut self, addr: u16, data: u8);
+trait_alias!(pub trait Context = context::Rom + context::Interrupt);
 
-    fn tick(&mut self) {}
+#[delegatable_trait]
+pub trait MapperTrait {
+    fn read_prg(&self, ctx: &impl Context, addr: u16) -> u8;
+    fn write_prg(&mut self, ctx: &mut impl Context, addr: u16, data: u8);
 
-    fn get_prg_page(&self, page: usize) -> usize {
+    fn read_chr(&mut self, ctx: &mut impl Context, addr: u16) -> u8;
+    fn write_chr(&mut self, ctx: &mut impl Context, addr: u16, data: u8);
+
+    fn tick(&mut self, _ctx: &mut impl Context) {}
+
+    fn prg_page(&self, page: u16) -> u16 {
         page
     }
 }
 
-pub fn create_mapper(rom: Ref<Rom>, irq_line: Wire<bool>) -> Ref<dyn Mapper> {
-    let mapper_id = rom.borrow().mapper_id;
+macro_rules! def_mapper {
+    ($($id:expr => $constr:ident($ty:ty),)*) => {
+        #[derive(Delegate, Serialize, Deserialize)]
+        #[delegate(MapperTrait)]
+        pub enum Mapper {
+            $(
+                $constr($ty),
+            )*
+        }
 
-    match mapper_id {
-        0 => wrap_ref(null::NullMapper::new(rom)),
-        1 => wrap_ref(mmc1::Mmc1::new(rom)),
-        2 => wrap_ref(unrom::Unrom::new(rom)),
-        3 => wrap_ref(cnrom::Cnrom::new(rom)),
-        4 => wrap_ref(mmc3::Mmc3::new(rom, irq_line)),
-        _ => panic!("Unsupported mapper: {mapper_id}"),
+        pub fn create_mapper(rom: &Rom) -> Result<Mapper, Error> {
+            let mapper_id = rom.mapper_id;
+            Ok(match mapper_id {
+                $(
+                    $id => Mapper::$constr(<$ty>::new(rom)),
+                )*
+                _ => Err(Error::UnsupportedMapper(mapper_id))?,
+            })
+        }
     }
+}
+
+def_mapper! {
+    0 => NullMapper(null::NullMapper),
+    1 => Mmc1(mmc1::Mmc1),
+    2 => Unrom(unrom::Unrom),
+    3 => Cnrom(cnrom::Cnrom),
+    4 => Mmc3(mmc3::Mmc3),
 }

@@ -1,42 +1,45 @@
-use crate::{memory::MemoryController, rom::Rom, util::Ref};
+use serde::{Deserialize, Serialize};
 
+use crate::{memory::MemoryController, rom::Rom};
+
+#[derive(Serialize, Deserialize)]
 pub struct Cnrom {
     ctrl: MemoryController,
 }
 
 impl Cnrom {
-    pub fn new(rom: Ref<Rom>) -> Self {
+    pub fn new(rom: &Rom) -> Self {
         let mut ctrl = MemoryController::new(rom);
         for i in 0..4 {
-            ctrl.map_prg(i, i);
+            ctrl.map_prg(rom, i, i);
         }
         for i in 0..8 {
-            ctrl.map_chr(i, i);
+            ctrl.map_chr(rom, i, i);
         }
         Self { ctrl }
     }
 }
 
-impl super::Mapper for Cnrom {
-    fn read_prg(&mut self, addr: u16) -> u8 {
-        self.ctrl.read_prg(addr)
+impl super::MapperTrait for Cnrom {
+    fn read_prg(&self, ctx: &impl super::Context, addr: u16) -> u8 {
+        self.ctrl.read_prg(ctx.rom(), addr)
     }
 
-    fn read_chr(&mut self, addr: u16) -> u8 {
-        self.ctrl.read_chr(addr)
-    }
-
-    fn write_prg(&mut self, _addr: u16, data: u8) {
+    fn write_prg(&mut self, ctx: &mut impl super::Context, addr: u16, data: u8) {
         for i in 0..8 {
-            self.ctrl.map_chr(i, data as usize * 8 + i);
+            self.ctrl.map_chr(ctx.rom(), i, data as usize * 8 + i);
         }
     }
 
-    fn write_chr(&mut self, addr: u16, data: u8) {
-        self.ctrl.write_chr(addr, data);
+    fn read_chr(&mut self, ctx: &mut impl super::Context, addr: u16) -> u8 {
+        self.ctrl.read_chr(ctx.rom(), addr)
     }
 
-    fn get_prg_page(&self, page: usize) -> usize {
-        self.ctrl.get_prg_page(page)
+    fn write_chr(&mut self, ctx: &mut impl super::Context, addr: u16, data: u8) {
+        self.ctrl.write_chr(ctx.rom(), addr, data);
+    }
+
+    fn prg_page(&self, page: u16) -> u16 {
+        self.ctrl.prg_page(page)
     }
 }

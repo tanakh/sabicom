@@ -1,12 +1,15 @@
+use serde::{Deserialize, Serialize};
+
 use crate::{
     consts::{LINES_PER_FRAME, PPU_CLOCK_PER_LINE, PRE_RENDER_LINE, SCREEN_RANGE},
+    context::IrqSource,
     memory::MemoryController,
     rom::{Mirroring, Rom},
-    util::{Ref, Wire},
 };
 
 use bitvec::prelude::*;
 
+#[derive(Serialize, Deserialize)]
 pub struct Mmc3 {
     cmd: u8,
     prg_swap: bool,
@@ -23,13 +26,12 @@ pub struct Mmc3 {
     ppu_frame: u64,
     ppu_bus_addr: u16,
     ppu_a12_edge: bool,
-    irq_line: Wire<bool>,
     ctrl: MemoryController,
 }
 
 impl Mmc3 {
-    pub fn new(rom: Ref<Rom>, irq_line: Wire<bool>) -> Self {
-        let mirroring = rom.borrow().mirroring;
+    pub fn new(rom: &Rom) -> Self {
+        let mirroring = rom.mirroring;
         let mut ret = Self {
             cmd: 0,
             prg_swap: false,
@@ -46,54 +48,62 @@ impl Mmc3 {
             ppu_frame: 0,
             ppu_bus_addr: 0,
             ppu_a12_edge: false,
-            irq_line,
             ctrl: MemoryController::new(rom),
         };
-        ret.update();
+        ret.update(rom);
         ret
     }
 
-    fn update(&mut self) {
+    fn update(&mut self, rom: &Rom) {
         let chr_swap = self.chr_swap as usize * 4;
         for i in 0..2 {
             let bank = self.chr_bank[i] as usize;
-            self.ctrl.map_chr((i * 2 + 0) ^ chr_swap, bank & !1);
-            self.ctrl.map_chr((i * 2 + 1) ^ chr_swap, bank | 1);
+            self.ctrl.map_chr(rom, (i * 2 + 0) ^ chr_swap, bank & !1);
+            self.ctrl.map_chr(rom, (i * 2 + 1) ^ chr_swap, bank | 1);
         }
         for i in 2..6 {
-            self.ctrl.map_chr((i + 2) ^ chr_swap, self.chr_bank[i] as _);
+            self.ctrl
+                .map_chr(rom, (i + 2) ^ chr_swap, self.chr_bank[i] as _);
         }
 
-        let prg_pages = self.ctrl.prg_pages();
+        let prg_pages = self.ctrl.prg_pages(rom);
         if !self.prg_swap {
-            self.ctrl.map_prg(0, self.prg_bank[0] as _);
-            self.ctrl.map_prg(1, self.prg_bank[1] as _);
-            self.ctrl.map_prg(2, prg_pages - 2);
-            self.ctrl.map_prg(3, prg_pages - 1);
+            self.ctrl.map_prg(rom, 0, self.prg_bank[0] as _);
+            self.ctrl.map_prg(rom, 1, self.prg_bank[1] as _);
+            self.ctrl.map_prg(rom, 2, prg_pages - 2);
+            self.ctrl.map_prg(rom, 3, prg_pages - 1);
         } else {
-            self.ctrl.map_prg(0, prg_pages - 2);
-            self.ctrl.map_prg(1, self.prg_bank[1] as _);
-            self.ctrl.map_prg(2, self.prg_bank[0] as _);
-            self.ctrl.map_prg(3, prg_pages - 1);
+            self.ctrl.map_prg(rom, 0, prg_pages - 2);
+            self.ctrl.map_prg(rom, 1, self.prg_bank[1] as _);
+            self.ctrl.map_prg(rom, 2, self.prg_bank[0] as _);
+            self.ctrl.map_prg(rom, 3, prg_pages - 1);
         }
 
         self.ctrl.set_mirroring(self.mirroring);
     }
+
+    fn update_ppu_addr(&mut self, addr: u16) {
+        if addr >= 0x2000 {
+            return;
+        }
+
+        if self.ppu_bus_addr & 0x1000 == 0 && addr & 0x1000 != 0 {
+            self.ppu_a12_edge = true;
+        }
+
+        self.ppu_bus_addr = addr;
+    }
 }
 
-impl super::Mapper for Mmc3 {
-    fn read_prg(&mut self, addr: u16) -> u8 {
-        self.ctrl.read_prg(addr)
+impl super::MapperTrait for Mmc3 {
+    fn read_prg(&self, ctx: &impl super::Context, addr: u16) -> u8 {
+        self.ctrl.read_prg(ctx.rom(), addr)
     }
 
-    fn read_chr(&mut self, addr: u16) -> u8 {
-        self.update_ppu_addr(addr);
-        self.ctrl.read_chr(addr)
-    }
-
-    fn write_prg(&mut self, addr: u16, data: u8) {
+    fn write_prg(&mut self, ctx: &mut impl super::Context, addr: u16, data: u8) {
         if addr & 0x8000 == 0 {
-            return self.ctrl.write_prg(addr, data);
+            self.ctrl.write_prg(ctx.rom(), addr, data);
+            return;
         }
 
         match addr & 0xE001 {
@@ -109,7 +119,7 @@ impl super::Mapper for Mmc3 {
                     6..=7 => self.prg_bank[self.cmd as usize - 6] = data,
                     _ => unreachable!(),
                 }
-                self.update()
+                self.update(ctx.rom());
             }
 
             0xA000 => {
@@ -120,11 +130,11 @@ impl super::Mapper for Mmc3 {
                         Mirroring::Horizontal
                     };
                 }
-                self.update()
+                self.update(ctx.rom());
             }
             0xA001 => {
                 let v = data.view_bits::<Lsb0>();
-                log::warn!("PRG RAM protect: enable: {}, write protect: {}", v[7], v[6]);
+                log::info!("PRG RAM protect: enable: {}, write protect: {}", v[7], v[6]);
             }
 
             0xC000 => {
@@ -155,7 +165,7 @@ impl super::Mapper for Mmc3 {
                     self.ppu_cycle
                 );
                 self.irq_enable = false;
-                self.irq_line.set(false);
+                ctx.set_irq_source(IrqSource::Mapper, false);
             }
             0xE001 => {
                 log::trace!(
@@ -171,12 +181,17 @@ impl super::Mapper for Mmc3 {
         }
     }
 
-    fn write_chr(&mut self, addr: u16, data: u8) {
+    fn read_chr(&mut self, ctx: &mut impl super::Context, addr: u16) -> u8 {
         self.update_ppu_addr(addr);
-        self.ctrl.write_chr(addr, data);
+        self.ctrl.read_chr(ctx.rom(), addr)
     }
 
-    fn tick(&mut self) {
+    fn write_chr(&mut self, ctx: &mut impl super::Context, addr: u16, data: u8) {
+        self.update_ppu_addr(addr);
+        self.ctrl.write_chr(ctx.rom(), addr, data);
+    }
+
+    fn tick(&mut self, ctx: &mut impl super::Context) {
         if (self.ppu_line < SCREEN_RANGE.end as u64 || self.ppu_line == PRE_RENDER_LINE as u64)
             && self.ppu_cycle == 260
         {
@@ -189,7 +204,7 @@ impl super::Mapper for Mmc3 {
                     self.irq_counter -= 1;
                 }
                 if (tmp > 0 || self.irq_reload) && self.irq_counter == 0 && self.irq_enable {
-                    self.irq_line.set(true);
+                    ctx.set_irq_source(IrqSource::Mapper, true);
                 }
             }
             self.ppu_a12_edge = false;
@@ -206,21 +221,7 @@ impl super::Mapper for Mmc3 {
         }
     }
 
-    fn get_prg_page(&self, page: usize) -> usize {
-        self.ctrl.get_prg_page(page)
-    }
-}
-
-impl Mmc3 {
-    fn update_ppu_addr(&mut self, addr: u16) {
-        if addr >= 0x2000 {
-            return;
-        }
-
-        if self.ppu_bus_addr & 0x1000 == 0 && addr & 0x1000 != 0 {
-            self.ppu_a12_edge = true;
-        }
-
-        self.ppu_bus_addr = addr;
+    fn prg_page(&self, page: u16) -> u16 {
+        self.ctrl.prg_page(page)
     }
 }
