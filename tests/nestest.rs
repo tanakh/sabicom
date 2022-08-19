@@ -27,8 +27,8 @@ fn test_nestest() -> anyhow::Result<()> {
 
     log::set_logger(&LOGGER).map(|()| log::set_max_level(log::LevelFilter::Trace))?;
 
-    let path = format!("./nes-test-roms/other/nestest.nes");
-    let dat = std::fs::read(std::path::Path::new(&path))?;
+    let path = "./nes-test-roms/other/nestest.nes";
+    let dat = std::fs::read(std::path::Path::new(path))?;
     let mut nes = Nes::try_from_file(&dat, None, &Default::default())?;
 
     // nestest.nes batch mode is start at 0xC000
