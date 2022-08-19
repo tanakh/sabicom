@@ -49,8 +49,8 @@ fn default_key_config() -> KeyConfig {
         ("Down", any!(keycode!(Down), pad_button!(0, DPadDown))),
         ("Left", any!(keycode!(Left), pad_button!(0, DPadLeft))),
         ("Right", any!(keycode!(Right), pad_button!(0, DPadRight))),
-        ("A", any!(keycode!(X), pad_button!(0, South))),
-        ("B", any!(keycode!(Z), pad_button!(0, West))),
+        ("A", any!(keycode!(X), pad_button!(0, East))),
+        ("B", any!(keycode!(Z), pad_button!(0, South))),
         ("Start", any!(keycode!(Return), pad_button!(0, Start))),
         ("Select", any!(keycode!(RShift), pad_button!(0, Select))),
     ];
