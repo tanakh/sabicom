@@ -49,6 +49,7 @@ struct Register {
 impl Register {
     fn new() -> Self {
         Register {
+            pulse: std::array::from_fn(Pulse::new),
             noise: Noise::new(),
             dmc: Dmc::new(),
             ..Default::default()
@@ -58,6 +59,7 @@ impl Register {
 
 #[derive(Default, Debug, Serialize, Deserialize)]
 struct Pulse {
+    ch: usize,
     enable: bool,
     duty: u8,
     length_counter_halt: bool,
@@ -80,6 +82,49 @@ struct Pulse {
     phase: u8,
 }
 
+impl Pulse {
+    fn new(ch: usize) -> Self {
+        Self {
+            ch,
+            ..Default::default()
+        }
+    }
+
+    fn target_period(&self) -> u16 {
+        let delta = self.timer >> self.sweep_shift;
+        if !self.sweep_negate {
+            self.timer + delta
+        } else if self.ch == 0 {
+            self.timer - delta - 1
+        } else {
+            self.timer - delta
+        }
+    }
+
+    fn sample(&self, correct_bias: bool) -> f32 {
+        const PULSE_WAVEFORM: [[u8; 8]; 4] = [
+            [0, 1, 0, 0, 0, 0, 0, 0],
+            [0, 1, 1, 0, 0, 0, 0, 0],
+            [0, 1, 1, 1, 1, 0, 0, 0],
+            [1, 0, 0, 1, 1, 1, 1, 1],
+        ];
+
+        let volume = if self.constant_volume {
+            self.volume
+        } else {
+            self.decay_level
+        };
+        let target_period = self.target_period();
+        let sweep_muting = self.sweep_enabled && (target_period < 8 || target_period > 0x7ff);
+        if !(self.length_counter == 0 || sweep_muting || self.timer < 8) {
+            let bias = if correct_bias { -0.5 } else { 0.0 };
+            volume as f32 * (PULSE_WAVEFORM[self.duty as usize][self.phase as usize] as f32 + bias)
+        } else {
+            0.0
+        }
+    }
+}
+
 #[derive(Default, Serialize, Deserialize)]
 struct Triangle {
     enable: bool,
@@ -93,6 +138,24 @@ struct Triangle {
     linear_counter: u8,
     linear_counter_reload: bool,
     sequencer_counter: u16,
+}
+
+impl Triangle {
+    fn sample(&self, correct_bias: bool) -> f32 {
+        #[rustfmt::skip]
+        const TRIANGLE_WAVEFORM: [u8; 32] = [
+            15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0,
+            0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15,
+        ];
+
+        // mute when timer value is too small because it produces ultrasonic
+        if self.linear_counter == 0 || self.length_counter == 0 || self.timer <= 2 {
+            0.0
+        } else {
+            let bias = if correct_bias { -8.0 } else { 0.0 };
+            TRIANGLE_WAVEFORM[self.phase as usize] as f32 + bias
+        }
+    }
 }
 
 #[derive(Default, Debug, Serialize, Deserialize)]
@@ -118,6 +181,21 @@ impl Noise {
         Noise {
             shift_register: 1,
             ..Default::default()
+        }
+    }
+
+    fn sample(&self, correct_bias: bool) -> f32 {
+        let volume = if self.constant_volume {
+            self.volume
+        } else {
+            self.decay_level
+        };
+        if !(self.length_counter == 0) {
+            let b = self.shift_register & 1;
+            let bias = if correct_bias { -0.5 } else { 0.0 };
+            volume as f32 * (b as f32 + bias)
+        } else {
+            0.0
         }
     }
 }
@@ -147,6 +225,11 @@ impl Dmc {
             shiftreg_remain: 8,
             ..Default::default()
         }
+    }
+
+    fn sample(&self, correct_bias: bool) -> f32 {
+        let bias = if correct_bias { -128.0 } else { 0.0 };
+        self.output_level as f32 + bias
     }
 }
 
@@ -392,9 +475,8 @@ impl Apu {
 
     pub fn clock_half_frame(&mut self) {
         for ch in 0..2 {
-            let target_period = self.target_period(ch);
-
             let r = &mut self.reg.pulse[ch];
+            let target_period = r.target_period();
             if r.length_counter > 0 && !r.length_counter_halt {
                 r.length_counter -= 1;
             }
@@ -422,89 +504,45 @@ impl Apu {
     }
 
     pub fn sample(&self) -> i16 {
-        const PULSE_WAVEFORM: [[u8; 8]; 4] = [
-            [0, 1, 0, 0, 0, 0, 0, 0],
-            [0, 1, 1, 0, 0, 0, 0, 0],
-            [0, 1, 1, 1, 1, 0, 0, 0],
-            [1, 0, 0, 1, 1, 1, 1, 1],
+        // let pulse = [
+        //     self.reg.pulse[0].sample(false),
+        //     self.reg.pulse[1].sample(false),
+        // ];
+        // let triangle = self.reg.triangle.sample(false);
+        // let noise = self.reg.noise.sample(false);
+        // let dmc = self.reg.dmc.sample(false);
+
+        // let pulse_out = if pulse[0] == 0.0 && pulse[1] == 0.0 {
+        //     0.0
+        // } else {
+        //     95.88 / (8128.0 / (pulse[0] as f64 + pulse[1] as f64) + 100.0)
+        // };
+
+        // let tnd_out = if triangle == 0.0 && noise == 0.0 && dmc == 0.0 {
+        //     0.0
+        // } else {
+        //     let t = triangle as f64 / 8227.0 + noise as f64 / 12241.0 + dmc as f64 / 22638.0;
+        //     159.79 / (1.0 / t + 100.0)
+        // };
+
+        // // TODO: highpass filter & lowpass filter
+        // ((pulse_out + tnd_out) * 30000.0).round() as i16
+
+        let pulse = [
+            self.reg.pulse[0].sample(true),
+            self.reg.pulse[1].sample(true),
         ];
+        let triangle = self.reg.triangle.sample(true);
+        let noise = self.reg.noise.sample(true);
+        let dmc = self.reg.dmc.sample(true);
 
-        let mut pulse = [0, 0];
+        // Linear approximation
 
-        for ch in 0..2 {
-            let r = &self.reg.pulse[ch];
+        let pulse_out = 0.00752 * (pulse[0] + pulse[1]);
+        let tnd_out = 0.00851 * triangle + 0.00494 * noise + 0.00335 * dmc;
+        let output = pulse_out + tnd_out;
 
-            let volume = if r.constant_volume {
-                r.volume
-            } else {
-                r.decay_level
-            };
-            let target_period = self.target_period(ch);
-            let sweep_muting = r.sweep_enabled && (target_period < 8 || target_period > 0x7ff);
-            if !(r.length_counter == 0 || sweep_muting || r.timer < 8) {
-                pulse[ch] = volume * PULSE_WAVEFORM[r.duty as usize][r.phase as usize];
-            }
-        }
-
-        let pulse_out = if pulse[0] == 0 && pulse[1] == 0 {
-            0.0
-        } else {
-            95.88 / (8128.0 / (pulse[0] as f64 + pulse[1] as f64) + 100.0)
-        };
-
-        #[rustfmt::skip]
-        const TRIANGLE_WAVEFORM: [u8; 32] = [
-            15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0,
-            0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15,
-        ];
-
-        // mute when timer value is too small because it produces ultrasonic
-        let triangle = if self.reg.triangle.linear_counter == 0
-            || self.reg.triangle.length_counter == 0
-            || self.reg.triangle.timer <= 2
-        {
-            0
-        } else {
-            TRIANGLE_WAVEFORM[self.reg.triangle.phase as usize]
-        };
-
-        let noise = {
-            let r = &self.reg.noise;
-            let volume = if r.constant_volume {
-                r.volume
-            } else {
-                r.decay_level
-            };
-            if !(r.length_counter == 0 || r.shift_register & 1 == 1) {
-                volume
-            } else {
-                0
-            }
-        };
-
-        let dmc = self.reg.dmc.output_level;
-
-        let tnd_out = if triangle == 0 && noise == 0 && dmc == 0 {
-            0.0
-        } else {
-            let t = triangle as f64 / 8227.0 + noise as f64 / 12241.0 + dmc as f64 / 22638.0;
-            159.79 / (1.0 / t + 100.0)
-        };
-
-        // TODO: highpass filter & lowpass filter
-        ((pulse_out + tnd_out) * 30000.0).round() as i16
-    }
-
-    fn target_period(&self, ch: usize) -> u16 {
-        let r = &self.reg.pulse[ch];
-        let delta = r.timer >> r.sweep_shift;
-        if !r.sweep_negate {
-            r.timer + delta
-        } else if ch == 0 {
-            r.timer - delta - 1
-        } else {
-            r.timer - delta
-        }
+        (output * 32000.0) as i16
     }
 
     pub fn set_input(&mut self, input: &Input) {
