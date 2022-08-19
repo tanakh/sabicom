@@ -884,10 +884,10 @@ impl Cpu {
         };
 
         let read = |addr: u16| {
-            if addr < 0x2000 || addr >= 0x8000 {
+            if !(0x2000..0x8000).contains(&addr) {
                 format!("{:02X}", ctx.read_pure(addr).unwrap_or(0))
             } else {
-                format!("??")
+                "??".to_string()
             }
         };
 

@@ -15,14 +15,16 @@ pub struct MemoryMap {
     cpu_stall: u64,
 }
 
-impl MemoryMap {
-    pub fn new() -> Self {
+impl Default for MemoryMap {
+    fn default() -> Self {
         Self {
             ram: vec![0x00; 2 * 1024],
             cpu_stall: 0,
         }
     }
+}
 
+impl MemoryMap {
     pub fn read(&self, ctx: &mut impl Context, addr: u16) -> u8 {
         match addr {
             0x0000..=0x1fff => self.ram[(addr & 0x7ff) as usize],
@@ -96,7 +98,7 @@ pub struct MemoryController {
 
 impl MemoryController {
     pub fn new(rom: &Rom, backup: Option<Vec<u8>>) -> Result<Self, Error> {
-        assert!(!(rom.chr_ram_size > 0 && !rom.chr_rom.is_empty()));
+        assert!(rom.chr_ram_size == 0 || rom.chr_rom.is_empty());
 
         let mirroring = rom.mirroring;
 

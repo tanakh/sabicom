@@ -148,12 +148,10 @@ impl Rom {
             } else {
                 64 << shift_count
             }
+        } else if header[8] == 0 {
+            8 * 1024
         } else {
-            if header[8] == 0 {
-                8 * 1024
-            } else {
-                header[8] as usize * 8 * 1024
-            }
+            header[8] as usize * 8 * 1024
         };
 
         let prg_nvram_size = if is_nes2 {
@@ -174,12 +172,10 @@ impl Rom {
             } else {
                 64 << shift_count
             }
+        } else if chr_rom_size == 0 {
+            8 * 1024
         } else {
-            if chr_rom_size == 0 {
-                8 * 1024
-            } else {
-                0
-            }
+            0
         };
 
         let chr_nvram_size = if is_nes2 {

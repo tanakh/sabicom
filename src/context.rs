@@ -274,7 +274,7 @@ impl MemoryController for Inner4 {
         self.mem_ctrl.read_prg(&self.rom, addr)
     }
     fn write_prg(&mut self, addr: u16, data: u8) {
-        self.mem_ctrl.write_prg(&mut self.rom, addr, data);
+        self.mem_ctrl.write_prg(&self.rom, addr, data);
     }
 
     fn map_chr(&mut self, page: u32, bank1k: u32) {
@@ -284,7 +284,7 @@ impl MemoryController for Inner4 {
         self.mem_ctrl.read_chr(&self.rom, addr)
     }
     fn write_chr(&mut self, addr: u16, data: u8) {
-        self.mem_ctrl.write_chr(&mut self.rom, addr, data);
+        self.mem_ctrl.write_chr(&self.rom, addr, data);
     }
 }
 
@@ -337,9 +337,9 @@ impl Timing for Inner4 {
 impl Context {
     pub fn new(rom: rom::Rom, backup: Option<Vec<u8>>) -> Result<Context, Error> {
         let cpu = cpu::Cpu::default();
-        let mem = memory::MemoryMap::new();
-        let ppu = ppu::Ppu::new();
-        let apu = apu::Apu::new();
+        let mem = memory::MemoryMap::default();
+        let ppu = ppu::Ppu::default();
+        let apu = apu::Apu::default();
         let mem_ctrl = memory::MemoryController::new(&rom, backup)?;
         let signales = Signales::default();
 

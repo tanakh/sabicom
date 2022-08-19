@@ -34,7 +34,7 @@ pub enum Error {
     BackupSizeMismatch(usize, usize),
 }
 
-const CORE_INFO: &'static CoreInfo = &CoreInfo {
+const CORE_INFO: CoreInfo = CoreInfo {
     system_name: "NES (Sabicom)",
     abbrev: "nes",
     file_extensions: &["nes"],

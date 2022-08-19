@@ -115,7 +115,7 @@ impl Pulse {
             self.decay_level
         };
         let target_period = self.target_period();
-        let sweep_muting = self.sweep_enabled && (target_period < 8 || target_period > 0x7ff);
+        let sweep_muting = self.sweep_enabled && !(8..=0x7ff).contains(&target_period);
         if !(self.length_counter == 0 || sweep_muting || self.timer < 8) {
             let bias = if correct_bias { -0.5 } else { 0.0 };
             volume as f32 * (PULSE_WAVEFORM[self.duty as usize][self.phase as usize] as f32 + bias)
@@ -190,7 +190,7 @@ impl Noise {
         } else {
             self.decay_level
         };
-        if !(self.length_counter == 0) {
+        if self.length_counter != 0 {
             let b = self.shift_register & 1;
             let bias = if correct_bias { -0.5 } else { 0.0 };
             volume as f32 * (b as f32 + bias)
@@ -233,8 +233,8 @@ impl Dmc {
     }
 }
 
-impl Apu {
-    pub fn new() -> Self {
+impl Default for Apu {
+    fn default() -> Self {
         Self {
             controller_latch: false,
             expansion_latch: 0,
@@ -248,7 +248,9 @@ impl Apu {
             audio_buffer: AudioBuffer::new(48000, 2),
         }
     }
+}
 
+impl Apu {
     pub fn audio_buffer(&self) -> &AudioBuffer {
         &self.audio_buffer
     }
@@ -367,10 +369,8 @@ impl Apu {
                         if r.output_level <= 0x7d {
                             r.output_level += 2;
                         }
-                    } else {
-                        if r.output_level >= 2 {
-                            r.output_level -= 2;
-                        }
+                    } else if r.output_level >= 2 {
+                        r.output_level -= 2;
                     }
                     r.shiftreg >>= 1;
                 }
@@ -430,17 +430,15 @@ impl Apu {
                 r.envelope_start = false;
                 r.decay_level = 15;
                 r.envelope_counter = r.volume;
-            } else {
-                if r.envelope_counter == 0 {
-                    r.envelope_counter = r.volume;
-                    if r.decay_level != 0 {
-                        r.decay_level -= 1;
-                    } else if r.length_counter_halt {
-                        r.decay_level = 15;
-                    }
-                } else {
-                    r.envelope_counter -= 1;
+            } else if r.envelope_counter == 0 {
+                r.envelope_counter = r.volume;
+                if r.decay_level != 0 {
+                    r.decay_level -= 1;
+                } else if r.length_counter_halt {
+                    r.decay_level = 15;
                 }
+            } else {
+                r.envelope_counter -= 1;
             }
         }
 
@@ -482,7 +480,7 @@ impl Apu {
             }
 
             let enabled = r.sweep_enabled && r.sweep_shift != 0;
-            let muting = target_period < 8 || target_period > 0x7ff;
+            let muting = !(8..=0x7ff).contains(&target_period);
 
             if r.sweep_counter == 0 && enabled && !muting {
                 r.timer = target_period;
@@ -759,11 +757,9 @@ impl Apu {
 
                 if !self.reg.dmc.enable {
                     self.reg.dmc.length_counter = 0;
-                } else {
-                    if self.reg.dmc.length_counter == 0 {
-                        self.reg.dmc.cur_addr = self.reg.dmc.sample_addr;
-                        self.reg.dmc.length_counter = self.reg.dmc.sample_length;
-                    }
+                } else if self.reg.dmc.length_counter == 0 {
+                    self.reg.dmc.cur_addr = self.reg.dmc.sample_addr;
+                    self.reg.dmc.length_counter = self.reg.dmc.sample_length;
                 }
 
                 ctx.set_irq_source(IrqSource::ApuDmc, false);

@@ -60,8 +60,8 @@ impl Register {
     }
 }
 
-impl Ppu {
-    pub fn new() -> Self {
+impl Default for Ppu {
+    fn default() -> Self {
         Self {
             reg: Register::new(),
             oam: vec![0x00; 256],
@@ -74,7 +74,9 @@ impl Ppu {
             render_graphics: true,
         }
     }
+}
 
+impl Ppu {
     pub fn frame_buffer(&self) -> &FrameBuffer {
         &self.frame_buffer
     }
@@ -138,14 +140,15 @@ impl Ppu {
             self.reg.sprite0_hit = false;
         }
 
-        if (self.line < SCREEN_RANGE.end || self.line == PRE_RENDER_LINE) && self.counter == 256 {
-            if screen_visible {
-                let bg_pat_addr = if self.reg.bg_pat_addr { 0x1000 } else { 0 };
-                let spr_pat_addr = if self.reg.sprite_pat_addr { 0x1000 } else { 0 };
-                // FIXME: Dummy read for mapper that use CHR Address value
-                let _ = read_pattern(ctx, bg_pat_addr);
-                let _ = read_pattern(ctx, spr_pat_addr);
-            }
+        if screen_visible
+            && (self.line < SCREEN_RANGE.end || self.line == PRE_RENDER_LINE)
+            && self.counter == 256
+        {
+            let bg_pat_addr = if self.reg.bg_pat_addr { 0x1000 } else { 0 };
+            let spr_pat_addr = if self.reg.sprite_pat_addr { 0x1000 } else { 0 };
+            // FIXME: Dummy read for mapper that use CHR Address value
+            let _ = read_pattern(ctx, bg_pat_addr);
+            let _ = read_pattern(ctx, spr_pat_addr);
         }
 
         if screen_visible

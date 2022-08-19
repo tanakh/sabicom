@@ -55,7 +55,7 @@ impl Mmc3 {
         let chr_swap = self.chr_swap as u32 * 4;
         for i in 0..2 {
             let bank = self.chr_bank[i] as u32;
-            ctx.map_chr((i * 2 + 0) as u32 ^ chr_swap, bank & !1);
+            ctx.map_chr((i * 2) as u32 ^ chr_swap, bank & !1);
             ctx.map_chr((i * 2 + 1) as u32 ^ chr_swap, bank | 1);
         }
         for i in 2..6 {
