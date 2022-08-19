@@ -11,6 +11,9 @@ use crate::{
 
 #[delegatable_trait]
 pub trait Cpu {
+    fn cpu(&self) -> &cpu::Cpu;
+    fn cpu_mut(&mut self) -> &mut cpu::Cpu;
+
     fn reset_cpu(&mut self);
     fn tick_cpu(&mut self);
 }
@@ -111,6 +114,13 @@ pub struct Context {
 }
 
 impl Cpu for Context {
+    fn cpu(&self) -> &cpu::Cpu {
+        &self.cpu
+    }
+    fn cpu_mut(&mut self) -> &mut cpu::Cpu {
+        &mut self.cpu
+    }
+
     fn reset_cpu(&mut self) {
         self.cpu.reset(&mut self.inner);
     }

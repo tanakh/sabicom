@@ -10,4 +10,5 @@ pub mod ppu;
 pub mod rom;
 pub mod util;
 
-pub use nes::Nes;
+pub use nes::{Config, Nes};
+pub use rom::Rom;

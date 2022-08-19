@@ -15,8 +15,10 @@ pub struct Ppu {
     frame: u64,
     line_buf: Vec<u8>,
     sprite0_hit: Vec<bool>,
+
     #[serde(skip)]
     frame_buffer: FrameBuffer,
+    render_graphics: bool,
 }
 
 #[derive(Default, Serialize, Deserialize)]
@@ -69,6 +71,7 @@ impl Ppu {
             line_buf: vec![0x00; SCREEN_WIDTH],
             sprite0_hit: vec![false; SCREEN_WIDTH],
             frame_buffer: FrameBuffer::new(SCREEN_WIDTH, SCREEN_HEIGHT),
+            render_graphics: true,
         }
     }
 
@@ -82,6 +85,10 @@ impl Ppu {
 
     pub fn frame(&self) -> u64 {
         self.frame
+    }
+
+    pub fn set_render_graphics(&mut self, render: bool) {
+        self.render_graphics = render;
     }
 
     pub fn tick(&mut self, ctx: &mut impl Context) {

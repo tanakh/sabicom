@@ -83,6 +83,10 @@ impl Cpu {
         self.exec_interrupt(ctx, Interrupt::Rst, false);
     }
 
+    pub fn set_pc(&mut self, pc: u16) {
+        self.reg.pc = pc;
+    }
+
     fn exec_interrupt(&mut self, ctx: &mut impl Context, interrupt: Interrupt, brk: bool) {
         log::info!("Interrupt: {:?}", interrupt);
 

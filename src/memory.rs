@@ -148,6 +148,10 @@ impl MemoryController {
         Ok(ret)
     }
 
+    pub fn prg_ram(&self) -> &[u8] {
+        &self.prg_ram
+    }
+
     /// Maps a PRG ROM page to a given 8KB bank
     pub fn map_prg(&mut self, rom: &Rom, page: u32, bank8k: u32) {
         self.rom_page[page as usize] = (bank8k * 0x2000) as usize % rom.prg_rom.len();

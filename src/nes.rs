@@ -3,13 +3,14 @@ use meru_interface::{ConfigUi, CoreInfo, EmulatorCore, KeyConfig};
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    consts, context,
+    consts,
+    context::{self, MemoryController},
     rom::{self, RomError, RomFormat},
     util::{Input, Pad},
 };
 
 pub struct Nes {
-    ctx: context::Context,
+    pub ctx: context::Context,
 }
 
 #[derive(Default, Serialize, Deserialize)]
@@ -154,6 +155,7 @@ impl EmulatorCore for Nes {
             .ppu_mut()
             .frame_buffer_mut()
             .resize(consts::SCREEN_WIDTH, consts::SCREEN_HEIGHT);
+        self.ctx.ppu_mut().set_render_graphics(render_graphics);
 
         let frame = self.ctx.ppu().frame();
         while frame == self.ctx.ppu().frame() {
@@ -162,7 +164,14 @@ impl EmulatorCore for Nes {
     }
 
     fn reset(&mut self) {
-        todo!()
+        use context::{Cpu, Rom};
+
+        let backup = self.backup();
+        let mut rom = rom::Rom::default();
+        std::mem::swap(&mut rom, self.ctx.rom_mut());
+        self.ctx = context::Context::new(rom, backup).unwrap();
+
+        self.ctx.reset_cpu();
     }
 
     fn frame_buffer(&self) -> &meru_interface::FrameBuffer {
@@ -204,8 +213,12 @@ impl EmulatorCore for Nes {
     }
 
     fn backup(&self) -> Option<Vec<u8>> {
-        // TODO
-        None
+        use context::Rom;
+        if self.ctx.rom().has_battery {
+            Some(self.ctx.memory_ctrl().prg_ram().to_vec())
+        } else {
+            None
+        }
     }
 
     fn save_state(&self) -> Vec<u8> {
