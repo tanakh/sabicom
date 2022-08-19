@@ -2,6 +2,13 @@
 name = "sabicom"
 version = "0.1.0"
 edition = "2021"
+authors = ["Hideyuki Tanaka <tanaka.hideyuki@gmail.com>"]
+license = "MIT"
+description = "NES emulator"
+repository = "https://github.com/tanakh/sabicom"
+readme = "README.md"
+categories = ["emulators"]
+keywords = ["emulators", "nes"]
 
 [dependencies]
 meru-interface = "0.2.0"
