@@ -1,11 +1,13 @@
+use meru_interface::EmulatorCore;
+use sabicom::{context::Cpu, Nes};
+
 #[test]
 fn test_nestest() -> anyhow::Result<()> {
-    use once_cell::sync::OnceCell;
     use std::fmt::Write;
-    use std::sync::{Arc, Mutex};
+    use std::sync::Mutex;
 
-    #[derive(Debug)]
-    struct NestestLogger(Arc<Mutex<String>>);
+    #[derive(Debug, Default)]
+    struct NestestLogger(Mutex<String>);
 
     impl log::Log for NestestLogger {
         fn enabled(&self, metadata: &log::Metadata) -> bool {
@@ -21,24 +23,20 @@ fn test_nestest() -> anyhow::Result<()> {
         fn flush(&self) {}
     }
 
-    static LOGGER: OnceCell<NestestLogger> = OnceCell::new();
+    static LOGGER: NestestLogger = NestestLogger(Mutex::new(String::new()));
 
-    let output = Arc::new(Mutex::new(String::new()));
-    LOGGER.set(NestestLogger(Arc::clone(&output))).unwrap();
-
-    log::set_logger(LOGGER.get().unwrap()).map(|()| log::set_max_level(log::LevelFilter::Trace))?;
+    log::set_logger(&LOGGER).map(|()| log::set_max_level(log::LevelFilter::Trace))?;
 
     let path = format!("./nes-test-roms/other/nestest.nes");
     let dat = std::fs::read(std::path::Path::new(&path))?;
-    let rom = sabicom::rom::Rom::from_bytes(&dat)?;
-    let mut nes = sabicom::nes::Nes::new(rom, None);
+    let mut nes = Nes::try_from_file(&dat, None, &Default::default())?;
 
     // nestest.nes batch mode is start at 0xC000
-    nes.cpu.reg.pc = 0xC000;
+    nes.ctx.cpu_mut().set_pc(0xC000);
 
-    nes.exec_frame();
+    nes.exec_frame(false);
 
-    let my_output = output.lock().unwrap();
+    let my_output = LOGGER.0.lock().unwrap();
 
     const REFERENCE_OUTPUT: &str = include_str!("../nes-test-roms/other/nestest.log");
 

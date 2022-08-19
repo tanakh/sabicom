@@ -1,12 +1,13 @@
 use anyhow::Result;
+use meru_interface::EmulatorCore;
+use sabicom::{context::Bus, Nes};
 use std::path::Path;
 
 fn test_rom(path: impl AsRef<Path>) -> Result<()> {
     // let test_name = path.as_ref().file_stem().unwrap().to_str().unwrap();
 
     let dat = std::fs::read(path.as_ref())?;
-    let rom = sabicom::rom::Rom::from_bytes(&dat)?;
-    let mut nes = sabicom::nes::Nes::new(rom, None);
+    let mut nes = Nes::try_from_file(&dat, None, &Default::default())?;
 
     let mut cnt = 0;
     let mut starting = true;
@@ -19,9 +20,9 @@ fn test_rom(path: impl AsRef<Path>) -> Result<()> {
     let exit_code = loop {
         assert!(cnt < 3000, "too long time");
 
-        nes.exec_frame();
+        nes.exec_frame(false);
 
-        let stat = nes.mem.borrow().read(0x6000);
+        let stat = nes.ctx.read(0x6000);
         if !starting && stat < 0x80 {
             break stat;
         }
@@ -41,14 +42,14 @@ fn test_rom(path: impl AsRef<Path>) -> Result<()> {
     };
 
     let tag = (1..=3)
-        .map(|i| nes.mem.borrow().read(0x6000 + i))
+        .map(|i| nes.ctx.read(0x6000 + i))
         .collect::<Vec<_>>();
 
     assert_eq!(tag, [0xDE, 0xB0, 0x61]);
 
     let mut msg = String::new();
     for i in 0x6004.. {
-        let c = nes.mem.borrow().read(i);
+        let c = nes.ctx.read(i);
         if c == 0 {
             break;
         }
