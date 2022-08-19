@@ -117,9 +117,9 @@ impl Rom {
         let has_trainer = header[6] & 0x04 != 0;
 
         let mapper_id = if is_nes2 {
-            header[6] as u16 >> 4 | header[7] as u16 & 0xf0 | (header[8] as u16 & 0xf0) << 8
+            header[6] as u16 >> 4 | header[7] as u16 & 0xf0 | (header[8] as u16 & 0xf) << 8
         } else {
-            header[6] as u16 >> 4
+            header[6] as u16 >> 4 | header[7] as u16 & 0xf0
         };
 
         let submapper_id = if is_nes2 { header[8] >> 4 } else { 0 };
