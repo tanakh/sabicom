@@ -1,5 +1,6 @@
 use bytesize::ByteSize;
-use meru_interface::{ConfigUi, CoreInfo, EmulatorCore, KeyConfig};
+use meru_interface::{CoreInfo, EmulatorCore, KeyConfig};
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -13,14 +14,8 @@ pub struct Nes {
     pub ctx: context::Context,
 }
 
-#[derive(Default, Serialize, Deserialize)]
+#[derive(Default, JsonSchema, Serialize, Deserialize)]
 pub struct Config {}
-
-impl ConfigUi for Config {
-    fn ui(&mut self, ui: &mut impl meru_interface::Ui) {
-        ui.label("No config options");
-    }
-}
 
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
