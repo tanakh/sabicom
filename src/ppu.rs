@@ -38,7 +38,7 @@ struct Register {
     bg_visible: bool,
     sprite_clip: bool,
     bg_clip: bool,
-    color_display: bool,
+    greyscale: bool,
 
     oam_addr: u8,
 
@@ -175,7 +175,7 @@ impl Ppu {
     }
 
     pub fn render_line(&mut self, ctx: &mut impl Context) {
-        let bg = read_palette(ctx, 0) & 0x3f;
+        let bg = read_palette(ctx, 0, self.reg.greyscale);
         self.line_buf.fill(bg);
         self.sprite0_hit.fill(false);
 
@@ -235,7 +235,7 @@ impl Ppu {
 
                 let b = (b0 >> (7 - lx)) & 1 | ((b1 >> (7 - lx)) & 1) << 1;
                 if b != 0 {
-                    self.line_buf[x - 8] = 0x40 + read_palette(ctx, attr << 2 | b);
+                    self.line_buf[x - 8] = 0x40 + read_palette(ctx, attr << 2 | b, self.reg.greyscale);
                 }
             }
 
@@ -309,7 +309,7 @@ impl Ppu {
                         self.sprite0_hit[x] = true;
                     }
                     if !is_bg || self.line_buf[x] & 0x40 == 0 {
-                        self.line_buf[x] = read_palette(ctx, 0x10 | upper | lo);
+                        self.line_buf[x] = read_palette(ctx, 0x10 | upper | lo, self.reg.greyscale);
                     }
                     self.line_buf[x] |= 0x80;
                 }
@@ -430,7 +430,7 @@ impl Ppu {
                 self.reg.bg_visible = data[3];
                 self.reg.sprite_clip = !data[2];
                 self.reg.bg_clip = !data[1];
-                self.reg.color_display = data[0];
+                self.reg.greyscale = data[0];
             }
             2 => {
                 // Status
@@ -505,6 +505,7 @@ fn read_pattern(ctx: &mut impl Context, addr: u16) -> u8 {
     ctx.read_chr_mapper(addr)
 }
 
-fn read_palette(ctx: &mut impl Context, index: u8) -> u8 {
-    ctx.read_chr_mapper(0x3f00 + index as u16)
+fn read_palette(ctx: &mut impl Context, index: u8, greyscale: bool) -> u8 {
+    let palette_mask = if greyscale { 0x30 } else { 0x3f };
+    ctx.read_chr_mapper(0x3f00 + index as u16) & palette_mask
 }
